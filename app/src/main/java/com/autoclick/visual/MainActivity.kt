@@ -35,8 +35,10 @@ import java.io.FileOutputStream
  */
 class MainActivity : AppCompatActivity() {
 
-    private var screen = 0 // 0 = menu, 1 = missions de renseignements, 2 = farm (réglages), 3 = farm (5 ou 6 marches ?)
+    private var screen = 0 // 0 = menu, 1 = missions, 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages)
     private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
+    private var huntN = 5 // idem pour le hunt
+    private lateinit var huntCountEdit: EditText
     private var pendingMode = "intel"
 
     // Réglages communs aux deux modes
@@ -91,6 +93,9 @@ class MainActivity : AppCompatActivity() {
                 if (screen == 2) {
                     saveSettings()
                     showFarmChoice()
+                } else if (screen == 5) {
+                    saveSettings()
+                    showHuntChoice()
                 } else if (screen != 0) {
                     saveSettings()
                     showMenu()
@@ -151,6 +156,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(button("Missions de renseignements") { showIntel() })
         root.addView(button("Farm") { showFarmChoice() })
+        root.addView(button("Hunt (chasses de Terreur)") { showHuntChoice() })
 
         root.addView(label("Autorisations (à faire une seule fois)"))
         root.addView(button("Activer le service d'accessibilité") {
@@ -354,6 +360,56 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- Hunt (chasses de Terreur) ----------
+
+    private fun showHuntChoice() {
+        screen = 4
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Hunt"; textSize = 22f })
+        root.addView(label("Combien de marches avez-vous ?"))
+        root.addView(button("5 marches") { huntN = 5; showHunt() })
+        root.addView(button("6 marches") { huntN = 6; showHunt() })
+        root.addView(
+            label(
+                "L'appli compte les marches déjà sorties (panneau à gauche de la carte) et ne lance une chasse " +
+                    "que s'il en reste une libre. Dernier choix : ${sp.getInt("huntMarches", 5)} marches."
+            )
+        )
+    }
+
+    private fun showHunt() {
+        screen = 5
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(button("Changer le nombre de marches") {
+            saveSettings()
+            showHuntChoice()
+        })
+        root.addView(TextView(this).apply { text = "Hunt : $huntN marches"; textSize = 22f })
+        root.addView(
+            label(
+                "Ouvrez le jeu sur la carte du monde. Pour chaque chasse : loupe, Terreur, Rechercher, " +
+                    "Ralliement, Appeler à un ralliement, Déployer."
+            )
+        )
+        root.addView(label("Nombre de chasses à lancer"))
+        huntCountEdit = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(sp.getInt("hunt${huntN}Count", 3).toString())
+        }
+        root.addView(huntCountEdit)
+        root.addView(
+            label(
+                "Quand elles sont terminées, un petit panneau flottant propose d'en relancer de 1 à 10 d'un seul toucher."
+            )
+        )
+
+        addCommonSettings(root, false)
+
+        root.addView(button("Démarrer") { start("hunt") })
+    }
+
     // ---------- Divers ----------
 
     private fun refreshCount() {
@@ -375,7 +431,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
-        if (screen == 0 || screen == 3) return
+        if (screen == 0 || screen == 3 || screen == 4) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
@@ -387,6 +443,9 @@ class MainActivity : AppCompatActivity() {
             e.putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
             e.putInt("idleSec", idleEdit.text.toString().toIntOrNull() ?: 30)
             e.putInt("harvestMin", harvestEdit.text.toString().toIntOrNull() ?: 5)
+        } else if (screen == 5) {
+            e.putInt("huntMarches", huntN)
+            e.putInt("hunt${huntN}Count", (huntCountEdit.text.toString().toIntOrNull() ?: 3).coerceIn(1, 99))
         } else {
             e.putInt("farmMarches", farmN)
             e.putBoolean(farmKey("Grand"), grandCheck.isChecked)

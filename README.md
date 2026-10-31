@@ -88,3 +88,10 @@ restant est sous 7 h. Plafond de récoltes = marches libres moins les récoltes 
 
 Menu Farm : un premier écran demande « 5 ou 6 marches ? », puis les réglages de récolte (grand, pain, bois, pierre, fer) sont
 propres à chaque cas et enregistrés séparément. Le total de marches du Farm vient de ce choix (plus de question dans les réglages).
+
+## Hunt (chasses de Terreur)
+Menu Hunt : 5 ou 6 marches, puis le nombre de chasses. Pour chaque chasse : loupe > tuile Terreur (vérifiée par le bouton
+« Rejoindre Auto. » qui n'apparaît qu'avec elle) > niveau maximum (bouton + du curseur) > Rechercher > « Ralliement » >
+« Appeler à un Ralliement » > Déployer. Avant chaque chasse, les marches sorties sont comptées (panneau à gauche) : s'il n'y
+en a plus de libre, l'appli attend. En fin de série, un panneau flottant propose de relancer de 1 à 10 chasses.
+Images : `app/src/main/assets/hunt/`.

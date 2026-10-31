@@ -28,7 +28,10 @@ import android.util.DisplayMetrics
 import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.ServiceCompat
@@ -176,6 +179,8 @@ class BotService : Service() {
         loadExtras()
         if (mode == "farm") {
             loadFarm()
+        } else if (mode == "hunt") {
+            loadHunt()
         } else {
             loadTemplates()
             loadGate()
@@ -196,7 +201,13 @@ class BotService : Service() {
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
         minMeat = sp.getInt("minMeat", 20)
         // Farm : le total vient du choix « 5 ou 6 marches » ; missions de renseignements : de leur réglage.
-        marchTotal = (if (mode == "farm") sp.getInt("farmMarches", 5) else sp.getInt("marchTotal", 5)).coerceIn(1, 6)
+        marchTotal = (
+            when (mode) {
+                "farm" -> sp.getInt("farmMarches", 5)
+                "hunt" -> sp.getInt("huntMarches", 5)
+                else -> sp.getInt("marchTotal", 5)
+            }
+        ).coerceIn(1, 6)
         harvestMin = sp.getInt("harvestMin", 5).coerceIn(0, 50)
         idleMs = sp.getInt("idleSec", 30).coerceIn(0, 3600) * 1000L
         pinMemoryMs = sp.getInt("pinMemory", 20).coerceIn(0, 600) * 60_000L
@@ -335,7 +346,7 @@ class BotService : Service() {
      * Nombre de marches sorties = lignes du panneau « Marche » : une ligne a un rond turquoise (ressource) à gauche
      * ou un bouton cyan (rappel / accélération) à droite. 0 si le panneau n'est pas visible (aucune marche sortie).
      */
-    private fun usedMarches(screen: Mat): Int {
+    private fun usedMarches(screen: Mat, allowTeal: Boolean = false): Int {
         val ht = panelHeader ?: return 0
         val hm = matchBest(screen, ht) ?: return 0
         if (hm.maxVal < 0.78) return 0
@@ -352,7 +363,8 @@ class BotService : Service() {
             val cy = headerY + (82 + i * 91) * sc - panelY0
             val teal = fraction(hsv, 22 * sc, cy - 28 * sc, 62 * sc, 56 * sc, Scalar(80.0, 50.0, 70.0), Scalar(100.0, 255.0, 255.0))
             val cyan = fraction(hsv, 303 * sc, cy - 24 * sc, 51 * sc, 48 * sc, Scalar(84.0, 90.0, 170.0), Scalar(102.0, 255.0, 255.0))
-            if (teal > 0.35 || cyan > 0.3) used++
+            // Une fenêtre posée sur le panneau cache les boutons cyan : seulement alors, le rond turquoise sert aussi.
+            if (cyan > 0.3 || (allowTeal && teal > 0.35)) used++ else break
         }
         hsv.release()
         return used
@@ -530,6 +542,10 @@ class BotService : Service() {
             detectFarm(screen, rgb)
             return
         }
+        if (mode == "hunt") {
+            detectHunt(screen, rgb)
+            return
+        }
         val now = SystemClock.uptimeMillis()
         if (now - lastClick < cooldown) return
         if (handleNoMarchPopup(screen, now)) return
@@ -560,7 +576,7 @@ class BotService : Service() {
                 }
                 if (templateNames[i] == "04_attaquer.png") {
                     // « Attaquer » = chasse à tête de loup : elle exige une marche libre (tentes et épées croisées non).
-                    val used = usedMarches(screen)
+                    val used = usedMarches(screen, true)
                     if (used >= marchTotal) {
                         log("marches $used/$marchTotal : aucune libre, chasse ignorée, retour à la carte des pins")
                         backToPins(screen, now)
@@ -1273,6 +1289,232 @@ class BotService : Service() {
         lastClick = now + 600
     }
 
+    // ---------- Mode Hunt (chasses de Terreur par ralliement) ----------
+
+    private var huntTarget = 3
+    private var huntDone = 0
+    private var huntAsked = false
+    private var huntSearchedAt = 0L
+    private var huntStartedAt = 0L
+    private var huntFails = 0
+    private var huntBackPending = false
+    private var huntLevelClicks = 0
+    private var huntLastWait = 0L
+    private var moreView: View? = null
+
+    private fun loadHunt() {
+        val sets = listOf(
+            "farm/loupe.png", "farm/tile_terreur.png", "farm/rechercher.png",
+            "hunt/ralliement_btn.png", "hunt/appeler_btn.png", "hunt/deployer_rally.png", "hunt/rejoindre_auto.png"
+        )
+        for (path in sets) {
+            val m = loadAsset(path) ?: continue
+            farm[path.substringAfter('/').removeSuffix(".png")] = m
+        }
+        val sp = getSharedPreferences("cfg", MODE_PRIVATE)
+        huntTarget = sp.getInt("hunt${marchTotal}Count", 3).coerceIn(1, 99)
+        huntDone = 0
+        huntAsked = false
+        huntSearchedAt = 0L
+        huntStartedAt = 0L
+        huntFails = 0
+        log("hunt : $huntTarget chasse(s), $marchTotal marches")
+    }
+
+    private fun huntWait(msg: String, now: Long) {
+        if (now - huntLastWait > 20_000) {
+            huntLastWait = now
+            log(msg)
+        }
+    }
+
+    /**
+     * Une chasse : loupe > tuile Terreur > (niveau max) > Rechercher > « Ralliement » > « Appeler à un
+     * ralliement » > Déployer. Avant chaque chasse on compte les marches sorties (panneau à gauche).
+     */
+    private fun detectHunt(screen: Mat, rgb: Mat) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClick < cooldown) return
+        if (huntBackPending) {
+            huntBackPending = false
+            lastClick = now
+            backArrow()
+            return
+        }
+        if (handleNoMarchPopup(screen, now)) {
+            huntBackPending = true // on ressort de l'écran de déploiement, puis on attend une marche libre
+            huntStartedAt = 0L
+            return
+        }
+        if (huntDone >= huntTarget) {
+            if (!huntAsked) {
+                huntAsked = true
+                log("hunt terminé : $huntDone chasse(s)")
+                main.post { showMorePanel() }
+            }
+            return
+        }
+        if (huntStartedAt == 0L) huntStartedAt = now
+        if (now - huntStartedAt > 150_000) {
+            huntFails++
+            huntStartedAt = 0L
+            log("hunt : tentative abandonnée (2 min 30 sans avancer), échec $huntFails")
+            if (huntFails >= 3) main.post { pauseBot("Hunt bloqué : voir le journal") }
+            return
+        }
+
+        // 1) envoyer les troupes
+        val md = farmMatch(screen, "deployer_rally", 0.8)
+        if (md != null) {
+            val (x, y) = farmCenter("deployer_rally", md)
+            huntDone++
+            huntFails = 0
+            huntStartedAt = 0L
+            huntSearchedAt = 0L
+            huntLevelClicks = 0
+            farmClick(x, y, "hunt : clic Déployer, chasse $huntDone/$huntTarget lancée")
+            return
+        }
+        // 2) fenêtre « Appeler à un Ralliement »
+        val ma = farmMatch(screen, "appeler_btn", 0.8)
+        if (ma != null) {
+            val (x, y) = farmCenter("appeler_btn", ma)
+            farmClick(x, y, "hunt : clic Appeler à un Ralliement")
+            return
+        }
+        // 3) fenêtre du Titan : bouton orange « Ralliement »
+        val mr = farmMatch(screen, "ralliement_btn", 0.8)
+        if (mr != null) {
+            val (x, y) = farmCenter("ralliement_btn", mr)
+            huntSearchedAt = 0L
+            farmClick(x, y, "hunt : clic Ralliement")
+            return
+        }
+        // 4) on attend le résultat de la recherche
+        if (huntSearchedAt > 0L && now - huntSearchedAt < 9_000L) return
+        // 5) liste de tuiles ouverte
+        val mk = farmMatch(screen, "rechercher", 0.8)
+        if (mk != null) {
+            val used = usedMarches(screen)
+            if (used >= marchTotal) {
+                huntWait("hunt : marches $used/$marchTotal, aucune libre : on attend", now)
+                return
+            }
+            if (farmMatch(screen, "rejoindre_auto", 0.8) == null) {
+                // Terreur n'est pas sélectionnée (« Rejoindre Auto. » n'apparaît qu'avec elle) : on touche la tuile.
+                val mt = farmMatch(screen, "tile_terreur", 0.8)
+                if (mt != null) {
+                    val (x, y) = farmCenter("tile_terreur", mt)
+                    farmClick(x, y, "hunt : clic tuile Terreur")
+                } else {
+                    swipeRow(0.76 * h, 0.6 * w, now)
+                    log("hunt : tuile Terreur introuvable, défilement vers le début")
+                }
+                return
+            }
+            // Niveau maximum : si le bouton « + » du curseur est encore actif (cyan), on le touche.
+            val (rx, ry) = farmCenter("rechercher", mk)
+            val sc = w / 1080.0
+            val px = 730 * sc
+            val py = ry - 242 * sc
+            if (huntLevelClicks < 10 && cyanAt(rgb, px * SCALE, py * SCALE, 24 * sc * SCALE)) {
+                huntLevelClicks++
+                farmClick(px.toFloat(), py.toFloat(), "hunt : niveau + ($huntLevelClicks)")
+                return
+            }
+            huntSearchedAt = now
+            farmClick(rx, ry, "hunt : clic Rechercher")
+            return
+        }
+        // 6) carte du monde : on ouvre la liste si une marche est libre
+        val ml = farmMatch(screen, "loupe", 0.85)
+        if (ml != null) {
+            val used = usedMarches(screen)
+            if (used >= marchTotal) {
+                huntWait("hunt : marches $used/$marchTotal, aucune libre : on attend", now)
+                return
+            }
+            val (x, y) = farmCenter("loupe", ml)
+            farmClick(x, y, "hunt : clic loupe (marches $used/$marchTotal)")
+        }
+    }
+
+    /** Vrai si la zone (centre cx, cy ; demi-côté r, en demi-résolution) est plutôt cyan (bouton actif). */
+    private fun cyanAt(rgb: Mat, cx: Double, cy: Double, r: Double): Boolean {
+        val x0 = (cx - r).toInt()
+        val y0 = (cy - r).toInt()
+        val sz = (2 * r).toInt()
+        if (x0 < 0 || y0 < 0 || sz <= 0 || x0 + sz > rgb.cols() || y0 + sz > rgb.rows()) return false
+        val roi = Mat(rgb, Rect(x0, y0, sz, sz))
+        val hsv = Mat()
+        Imgproc.cvtColor(roi, hsv, Imgproc.COLOR_RGB2HSV)
+        val mask = Mat()
+        Core.inRange(hsv, Scalar(84.0, 90.0, 170.0), Scalar(102.0, 255.0, 255.0), mask)
+        val f = Core.countNonZero(mask).toDouble() / (sz * sz)
+        hsv.release(); mask.release()
+        return f > 0.3
+    }
+
+    /** Panneau flottant en fin de série : 1 à 10 chasses de plus d'un seul toucher, ou arrêt. */
+    private fun showMorePanel() {
+        if (moreView != null) return
+        val d = resources.displayMetrics.density
+        val pad = (12 * d).toInt()
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, pad)
+            background = GradientDrawable().apply {
+                setColor(0xEE263238.toInt())
+                cornerRadius = 16 * d
+            }
+        }
+        box.addView(TextView(this).apply {
+            text = "Chasses terminées ($huntDone). En relancer :"
+            setTextColor(Color.WHITE)
+            textSize = 15f
+        })
+        for (row in 0 until 2) {
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (k in 1..5) {
+                val n = row * 5 + k
+                line.addView(Button(this).apply {
+                    text = n.toString()
+                    setOnClickListener {
+                        huntTarget = huntDone + n
+                        huntAsked = false
+                        huntStartedAt = 0L
+                        removeMorePanel()
+                        log("hunt : $n chasse(s) de plus demandée(s), total $huntTarget")
+                    }
+                }, LinearLayout.LayoutParams((52 * d).toInt(), (48 * d).toInt()))
+            }
+            box.addView(line)
+        }
+        box.addView(Button(this).apply {
+            text = "Arrêter"
+            setOnClickListener {
+                removeMorePanel()
+                pauseBot("Hunt arrêté")
+            }
+        })
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+        try {
+            wm.addView(box, lp)
+            moreView = box
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun removeMorePanel() {
+        try { moreView?.let { wm.removeView(it) } } catch (_: Exception) {}
+        moreView = null
+    }
+
     // ---------- Bouton flottant ----------
 
     private fun addOverlay() {
@@ -1418,6 +1660,7 @@ class BotService : Service() {
         overlay = null
         try { menuBtn?.let { wm.removeView(it) } } catch (_: Exception) {}
         menuBtn = null
+        removeMorePanel()
         vd?.release()
         reader?.close()
         projection?.stop()
