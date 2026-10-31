@@ -83,6 +83,9 @@ class BotService : Service() {
     private var compassDelayMs = 3000L
     private var mode = "intel" // « intel » (missions de renseignements) ou « farm »
     private var minMeat = 20
+    private var lastPanel: Mat? = null // bande du panneau des marches, pleine résolution (mode farm)
+    private var panelY0 = 0
+    private var grandRunning = false
     private var harvestMin = 5
     private var statChecks = 0
     private var idleMs = 30_000L
@@ -340,6 +343,14 @@ class BotService : Service() {
         val my0 = (0.105 * img.width).toInt()
         val my1 = minOf((0.158 * img.width).toInt(), img.height)
         val meat = Mat(rgba, Rect(mx0, my0, mx1 - mx0, my1 - my0)).clone()
+        if (mode == "farm") {
+            val sc = img.width / 1080.0
+            panelY0 = (380 * sc).toInt().coerceAtMost(img.height - 2)
+            val py1 = minOf((1010 * sc).toInt(), img.height)
+            val px1 = minOf((320 * sc).toInt(), img.width)
+            lastPanel?.release()
+            lastPanel = Mat(rgba, Rect(0, panelY0, px1, py1 - panelY0)).clone()
+        }
         val cropped = rgba.submat(0, img.height, 0, img.width)
         val smallRgba = Mat()
         Imgproc.resize(cropped, smallRgba, Size(), SCALE, SCALE, Imgproc.INTER_AREA)
@@ -512,10 +523,13 @@ class BotService : Service() {
         return false
     }
 
-    private fun readMeat(meat: Mat): Int? {
+    private fun readMeat(meat: Mat): Int? = ocrDigits(meat).toIntOrNull() // « 2 873 » -> 2873
+
+    /** Lit les chiffres d'une zone de texte blanc sur fond sombre (ML Kit) ; chaîne vide si illisible. */
+    private fun ocrDigits(src: Mat): String {
         return try {
             val gray = Mat()
-            Imgproc.cvtColor(meat, gray, Imgproc.COLOR_RGBA2GRAY)
+            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY)
             val big = Mat()
             Imgproc.resize(gray, big, Size(), 4.0, 4.0, Imgproc.INTER_CUBIC)
             val bin = Mat()
@@ -527,9 +541,9 @@ class BotService : Service() {
             gray.release(); big.release(); bin.release(); padded.release()
             val text = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 5, TimeUnit.SECONDS).text
             bmp.recycle()
-            text.filter { it.isDigit() }.toIntOrNull() // « 2 873 » -> 2873
+            text.filter { it.isDigit() }
         } catch (_: Exception) {
-            null
+            ""
         }
     }
 
@@ -699,7 +713,8 @@ class BotService : Service() {
     /** Plan de récolte = ce qu'on veut, moins ce que le panneau des marches montre déjà en cours. */
     private fun buildPlan(active: Map<String, Int>?) {
         farmTasks.clear()
-        if (farmGrand) farmTasks.add("GRAND")
+        if (active == null) grandRunning = false
+        if (farmGrand && !grandRunning) farmTasks.add("GRAND")
         for (k in farmKinds) {
             val need = (farmTarget[k] ?: 0) - (active?.get(k) ?: 0)
             repeat(need.coerceIn(0, 6)) { farmTasks.add(k) }
@@ -710,7 +725,7 @@ class BotService : Service() {
         searchedAt = 0L
         taskStartedAt = 0L
         farmFinished = false
-        log("farm : plan ${farmTasks.joinToString(", ")}" + if (active != null) " (déjà en cours : $active)" else "")
+        log("farm : plan ${farmTasks.joinToString(", ")}" + if (active != null) " (déjà en cours : $active, grand en cours : $grandRunning)" else "")
     }
 
     /**
@@ -718,12 +733,25 @@ class BotService : Service() {
      * l'icône de la ressource récoltée. Renvoie le nombre de récoltes en cours par type, ou null si le
      * panneau n'est pas visible (déplié).
      */
+    private fun readRowSeconds(rowCenterY: Double, s: Double): Int? {
+        val panel = lastPanel ?: return null
+        val y0 = (rowCenterY + 2 * s - panelY0).toInt()
+        val y1 = (rowCenterY + 34 * s - panelY0).toInt()
+        val x0 = (95 * s).toInt()
+        val x1 = minOf((292 * s).toInt(), panel.cols())
+        if (y0 < 0 || y1 > panel.rows() || x1 <= x0) return null
+        val d = ocrDigits(Mat(panel, Rect(x0, y0, x1 - x0, y1 - y0)))
+        if (d.length != 6) return null
+        return d.substring(0, 2).toInt() * 3600 + d.substring(2, 4).toInt() * 60 + d.substring(4, 6).toInt()
+    }
+
     private fun readActive(screen: Mat): Map<String, Int>? {
         val header = farmMatch(screen, "panneau_entete", 0.78) ?: return null
         val ht = farm["panneau_entete"]!!
         val s = w / 1080.0
         val headerY = (header.maxLoc.y + ht.rows() / 2.0) / SCALE
         val counts = HashMap<String, Int>()
+        grandRunning = false
         for (i in 0 until 6) {
             val cy = (headerY + (82 + i * 91) * s) * SCALE // centre de la ligne, en demi-résolution
             val bx = (10 * s * SCALE).toInt()
@@ -744,7 +772,16 @@ class BotService : Service() {
                 res.release()
                 if (v > bs) { second = bs; bs = v; best = k } else if (v > second) { second = v }
             }
-            if (bs >= 0.9 && bs - second >= 0.08) counts[best] = (counts[best] ?: 0) + 1
+            if (bs >= 0.9 && bs - second >= 0.08) {
+                // Durée de collecte restante : plus de 7 h = c'est le grand bâtiment, pas une petite récolte.
+                val secs = readRowSeconds(headerY + (82 + i * 91) * s, s)
+                if (secs != null && secs > 7 * 3600) {
+                    grandRunning = true
+                    log("farm : ligne ${i + 1} ($best) : ${secs / 3600}h${(secs % 3600) / 60}min restantes, c'est le grand")
+                } else {
+                    counts[best] = (counts[best] ?: 0) + 1
+                }
+            }
         }
         return counts
     }
@@ -1097,6 +1134,7 @@ class BotService : Service() {
         templates.clear()
         lastGray?.release()
         lastRgb?.release()
+        lastPanel?.release()
         farm.values.forEach { it.release() }
         farm.clear()
         gates.forEach { it.release() }

@@ -64,3 +64,7 @@ Images du mode Farm : `app/src/main/assets/farm/` (exemples dans `exemples_image
 Farm : le plan est le nombre de récoltes VOULUES en même temps. Au démarrage, l'appli lit le panneau « Marche n/m »
 (en haut à gauche de la carte du monde, une icône de ressource par marche) et ne lance que ce qui manque.
 Le bouton ▶ est maintenant à droite de l'écran pour ne pas masquer ce panneau.
+
+Grand en cours : une ligne du panneau des marches dont la durée de collecte dépasse 7 h est le grand bâtiment
+(lue par ML Kit) : il n'est pas compté parmi les petites et la tâche « grand » est sautée. Sinon, le test final reste
+l'écran de l'escouade : bouton Collecte gris = déjà lancé (flèche retour).
