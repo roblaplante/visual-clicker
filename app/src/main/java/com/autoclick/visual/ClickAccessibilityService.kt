@@ -34,4 +34,16 @@ class ClickAccessibilityService : AccessibilityService() {
             .build()
         dispatchGesture(gesture, null, null)
     }
+
+    /** Glissement (défilement de la liste de tuiles du mode Farm). */
+    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long = 350) {
+        val path = Path().apply {
+            moveTo(x1, y1)
+            lineTo(x2, y2)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+            .build()
+        dispatchGesture(gesture, null, null)
+    }
 }

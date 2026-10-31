@@ -10,35 +10,59 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
+import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileOutputStream
 
+/**
+ * Menu de l'application : « Missions de renseignements » et « Farm », chacun avec ses réglages.
+ * Les réglages sont gardés en mémoire à chaque sortie d'écran et au démarrage.
+ */
 class MainActivity : AppCompatActivity() {
 
+    private var screen = 0 // 0 = menu, 1 = missions de renseignements, 2 = farm
+    private var pendingMode = "intel"
+
+    // Réglages communs aux deux modes
     private lateinit var countView: TextView
     private lateinit var thresholdLabel: TextView
     private lateinit var thresholdBar: SeekBar
     private lateinit var intervalEdit: EditText
     private lateinit var cooldownEdit: EditText
+
+    // Missions de renseignements
     private lateinit var meatEdit: EditText
     private lateinit var compassEdit: EditText
     private lateinit var memEdit: EditText
     private lateinit var idleEdit: EditText
     private lateinit var harvestEdit: EditText
 
+    // Farm
+    private lateinit var grandCheck: CheckBox
+    private lateinit var painEdit: EditText
+    private lateinit var boisEdit: EditText
+    private lateinit var pierreEdit: EditText
+    private lateinit var ferEdit: EditText
+    private lateinit var farmTotal: TextView
+
     private val sp by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
     private val dir by lazy { File(filesDir, "templates").apply { mkdirs() } }
+    private val pad by lazy { (16 * resources.displayMetrics.density).toInt() }
 
     private val pickImage =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -52,6 +76,7 @@ class MainActivity : AppCompatActivity() {
                 val i = Intent(this, BotService::class.java)
                     .putExtra("code", r.resultCode)
                     .putExtra("data", data)
+                    .putExtra("mode", pendingMode)
                 ContextCompat.startForegroundService(this, i)
                 moveTaskToBack(true)
             }
@@ -59,27 +84,74 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (screen != 0) {
+                    saveSettings()
+                    showMenu()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+        showMenu()
+    }
 
-        val pad = (16 * resources.displayMetrics.density).toInt()
+    override fun onPause() {
+        saveSettings()
+        super.onPause()
+    }
+
+    // ---------- Fabrique de vues ----------
+
+    private fun newRoot(): LinearLayout {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
         }
         setContentView(ScrollView(this).apply { addView(root) })
+        return root
+    }
 
-        fun label(t: String) = TextView(this).apply { text = t; setPadding(0, pad / 2, 0, 0) }
-        fun button(t: String, onClick: () -> Unit) = Button(this).apply {
-            text = t
-            setOnClickListener { onClick() }
-        }
+    private fun label(t: String) = TextView(this).apply { text = t; setPadding(0, pad / 2, 0, 0) }
 
-        root.addView(TextView(this).apply { text = "Visual Clicker"; textSize = 24f })
-        root.addView(label("Clique à votre place sur les images que vous lui indiquez."))
+    private fun button(t: String, onClick: () -> Unit) = Button(this).apply {
+        text = t
+        setOnClickListener { onClick() }
+    }
 
-        root.addView(button("1. Activer le service d'accessibilité") {
+    private fun numberField(key: String, def: Int): EditText = EditText(this).apply {
+        inputType = InputType.TYPE_CLASS_NUMBER
+        setText(sp.getInt(key, def).toString())
+    }
+
+    private fun backToMenuButton(): View = button("◀ Menu") {
+        saveSettings()
+        showMenu()
+    }
+
+    // ---------- Menu ----------
+
+    private fun showMenu() {
+        screen = 0
+        val root = newRoot()
+        root.addView(TextView(this).apply { text = "Visual Clicker"; textSize = 26f })
+        root.addView(label("Choisissez ce que l'application doit faire à votre place."))
+
+        root.addView(button("Missions de renseignements") { showIntel() })
+        root.addView(button("Farm") { showFarm() })
+
+        root.addView(label("Autorisations (à faire une seule fois)"))
+        root.addView(button("Activer le service d'accessibilité") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         })
-        root.addView(button("2. Autoriser l'affichage par-dessus les autres apps") {
+        root.addView(button("Autoriser l'affichage par-dessus les autres apps") {
             startActivity(
                 Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -88,26 +160,36 @@ class MainActivity : AppCompatActivity() {
             )
         })
 
-        root.addView(button("3. (Facultatif) Ajouter une image à détecter en plus") { pickImage.launch("image/*") })
-        countView = label("")
-        root.addView(countView)
-        root.addView(button("Supprimer mes images ajoutées") {
-            dir.listFiles()?.forEach { it.delete() }
-            refresh()
-        })
+        root.addView(label("Journal des actions"))
+        root.addView(button("Voir le journal des actions") { showLog() })
+        root.addView(button("Effacer le journal") { File(filesDir, "journal.txt").delete() })
+        root.addView(
+            label(
+                "Une fois démarré, un bouton flottant ▶ apparaît : touchez-le pour lancer / mettre en pause " +
+                    "(glissez-le pour le déplacer). Le bouton ☰ en haut revient à ce menu. " +
+                    "Pour tout arrêter, touchez la notification."
+            )
+        )
+    }
 
+    // ---------- Réglages communs ----------
+
+    private fun addCommonSettings(root: LinearLayout) {
         thresholdLabel = label("")
         root.addView(thresholdLabel)
         thresholdBar = SeekBar(this).apply {
             max = 40 // 55 % .. 95 %
             progress = sp.getInt("threshold", 80) - 55
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) = refresh()
+                override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
+                    thresholdLabel.text = "Seuil de confiance : ${55 + p} %"
+                }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             })
         }
         root.addView(thresholdBar)
+        thresholdLabel.text = "Seuil de confiance : ${55 + thresholdBar.progress} %"
 
         root.addView(label("Fréquence d'analyse (ms)"))
         intervalEdit = EditText(this).apply {
@@ -122,64 +204,116 @@ class MainActivity : AppCompatActivity() {
             setText(sp.getLong("cooldown", 1000L).toString())
         }
         root.addView(cooldownEdit)
+    }
+
+    // ---------- Missions de renseignements ----------
+
+    private fun showIntel() {
+        screen = 1
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Missions de renseignements"; textSize = 22f })
+
+        root.addView(button("(Facultatif) Ajouter une image à détecter en plus") { pickImage.launch("image/*") })
+        countView = label("")
+        root.addView(countView)
+        root.addView(button("Supprimer mes images ajoutées") {
+            dir.listFiles()?.forEach { it.delete() }
+            refreshCount()
+        })
+        refreshCount()
+
+        addCommonSettings(root)
 
         root.addView(label("Viande minimum avant d'attaquer un pin (0 = ne pas vérifier)"))
-        meatEdit = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(sp.getInt("minMeat", 20).toString())
-        }
+        meatEdit = numberField("minMeat", 20)
         root.addView(meatEdit)
 
-        root.addView(label("Boussole : attente après une victoire ou un secours (secondes)"))
-        compassEdit = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(sp.getInt("compassDelay", 3).toString())
-        }
+        root.addView(label("Boussole : attente après un départ de troupes, une victoire ou un secours (secondes)"))
+        compassEdit = numberField("compassDelay", 3)
         root.addView(compassEdit)
 
         root.addView(label("Un pin déjà lancé n'est pas recliqué pendant (minutes)"))
-        memEdit = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(sp.getInt("pinMemory", 20).toString())
-        }
+        memEdit = numberField("pinMemory", 20)
         root.addView(memEdit)
 
         root.addView(label("Inactif sur la carte du monde pendant (secondes) : rouvrir la carte des pins (0 = non)"))
-        idleEdit = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(sp.getInt("idleSec", 30).toString())
-        }
+        idleEdit = numberField("idleSec", 30)
         root.addView(idleEdit)
 
         root.addView(label("Récupérer Tout quand ce nombre de pins ont une coche verte (0 = jamais, 1 = dès le premier)"))
-        harvestEdit = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(sp.getInt("harvestMin", 5).toString())
-        }
+        harvestEdit = numberField("harvestMin", 5)
         root.addView(harvestEdit)
 
-        root.addView(button("4. Démarrer") { start() })
-        root.addView(button("Voir le journal des actions") { showLog() })
-        root.addView(button("Effacer le journal") { File(filesDir, "journal.txt").delete() })
+        root.addView(button("Démarrer") { start("intel") })
+    }
+
+    // ---------- Farm ----------
+
+    private fun showFarm() {
+        screen = 2
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Farm"; textSize = 22f })
         root.addView(
             label(
-                "Un bouton flottant ▶ apparaît : touchez-le pour lancer / mettre en pause " +
-                    "(glissez-le pour le déplacer). Pour tout arrêter, touchez la notification."
+                "Ouvrez le jeu sur la carte du monde. L'appli touche la loupe, choisit les récoltes " +
+                    "dans l'ordre : le grand bâtiment d'abord, puis les petites, et envoie les troupes."
             )
         )
 
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        grandCheck = CheckBox(this).apply {
+            text = "Grande récolte (bâtiment d'alliance, s'il est disponible)"
+            isChecked = sp.getBoolean("farmGrand", true)
         }
-        refresh()
+        root.addView(grandCheck)
+
+        farmTotal = label("")
+        val watcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) = refreshFarmTotal()
+        }
+        root.addView(label("Petites récoltes : nombre de marches par ressource"))
+        root.addView(label("Pain"))
+        painEdit = numberField("farmPain", 0).also { it.addTextChangedListener(watcher) }
+        root.addView(painEdit)
+        root.addView(label("Bois"))
+        boisEdit = numberField("farmBois", 1).also { it.addTextChangedListener(watcher) }
+        root.addView(boisEdit)
+        root.addView(label("Pierre"))
+        pierreEdit = numberField("farmPierre", 2).also { it.addTextChangedListener(watcher) }
+        root.addView(pierreEdit)
+        root.addView(label("Fer"))
+        ferEdit = numberField("farmFer", 2).also { it.addTextChangedListener(watcher) }
+        root.addView(ferEdit)
+        grandCheck.setOnCheckedChangeListener { _, _ -> refreshFarmTotal() }
+        root.addView(farmTotal)
+        refreshFarmTotal()
+
+        addCommonSettings(root)
+
+        root.addView(button("Démarrer") { start("farm") })
     }
 
-    private fun refresh() {
+    private fun farmCount(e: EditText) = (e.text.toString().toIntOrNull() ?: 0).coerceIn(0, 6)
+
+    private fun refreshFarmTotal() {
+        if (screen != 2 || !::farmTotal.isInitialized) return
+        val total = (if (grandCheck.isChecked) 1 else 0) +
+            farmCount(painEdit) + farmCount(boisEdit) + farmCount(pierreEdit) + farmCount(ferEdit)
+        farmTotal.text = if (total > 6) {
+            "Total : $total récoltes. Maximum 6 : les dernières seront ignorées."
+        } else {
+            "Total : $total récolte(s) sur 6 marches."
+        }
+    }
+
+    // ---------- Divers ----------
+
+    private fun refreshCount() {
         val n = dir.listFiles()?.size ?: 0
         countView.text = "Boutons du jeu et pins déjà intégrés. $n image(s) supplémentaire(s) ajoutée(s)."
-        thresholdLabel.text = "Seuil de confiance : ${55 + thresholdBar.progress} %"
     }
 
     private fun saveTemplate(uri: Uri) {
@@ -191,27 +325,30 @@ class MainActivity : AppCompatActivity() {
         FileOutputStream(File(dir, "${System.currentTimeMillis()}.png")).use {
             bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
         }
-        refresh()
+        if (screen == 1) refreshCount()
     }
 
-    /** Les réglages sont gardés en mémoire à chaque sortie de l'écran et au démarrage. */
+    /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
-        if (!::harvestEdit.isInitialized) return
-        sp.edit()
-            .putInt("threshold", 55 + thresholdBar.progress)
-            .putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
-            .putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
-            .putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
-            .putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
-            .putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
-            .putInt("idleSec", idleEdit.text.toString().toIntOrNull() ?: 30)
-            .putInt("harvestMin", harvestEdit.text.toString().toIntOrNull() ?: 5)
-            .apply()
-    }
-
-    override fun onPause() {
-        saveSettings()
-        super.onPause()
+        if (screen == 0) return
+        val e = sp.edit()
+        e.putInt("threshold", 55 + thresholdBar.progress)
+        e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
+        e.putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
+        if (screen == 1) {
+            e.putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
+            e.putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
+            e.putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
+            e.putInt("idleSec", idleEdit.text.toString().toIntOrNull() ?: 30)
+            e.putInt("harvestMin", harvestEdit.text.toString().toIntOrNull() ?: 5)
+        } else {
+            e.putBoolean("farmGrand", grandCheck.isChecked)
+            e.putInt("farmPain", farmCount(painEdit))
+            e.putInt("farmBois", farmCount(boisEdit))
+            e.putInt("farmPierre", farmCount(pierreEdit))
+            e.putInt("farmFer", farmCount(ferEdit))
+        }
+        e.apply()
     }
 
     private fun showLog() {
@@ -224,16 +361,17 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun start() {
+    private fun start(mode: String) {
         if (ClickAccessibilityService.instance == null) {
-            Toast.makeText(this, "Activez d'abord le service d'accessibilité (étape 1)", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Activez d'abord le service d'accessibilité (menu)", Toast.LENGTH_LONG).show()
             return
         }
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Autorisez d'abord l'affichage par-dessus (étape 2)", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Autorisez d'abord l'affichage par-dessus (menu)", Toast.LENGTH_LONG).show()
             return
         }
         saveSettings()
+        pendingMode = mode
         val mpm = getSystemService(MediaProjectionManager::class.java)
         capture.launch(mpm.createScreenCaptureIntent())
     }

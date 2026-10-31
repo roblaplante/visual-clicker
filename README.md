@@ -53,3 +53,10 @@ combien de pins sont vus, cochés ou déjà lancés.
 
 Récolte : sur l'écran des pins, le bouton « Récupérer Tout » est cliqué dès qu'il apparaît (pins terminés = coche verte),
 puis l'écran « Récompenses » est fermé en touchant plus bas (appuyer n'importe où).
+
+## Menu et mode Farm
+L'appli s'ouvre sur un menu : « Missions de renseignements » et « Farm ». Le bouton flottant ☰ revient au menu.
+Farm : loupe (carte du monde) > liste de tuiles > grand bâtiment d'alliance (s'il existe) puis pain / bois / pierre / fer
+selon le plan choisi (6 marches au maximum) > Rechercher > Collecte > (grand : escouade > Collecte) > Déployer.
+Grand déjà lancé (bouton Collecte gris) : flèche retour en haut à gauche, on passe à la suivante.
+Images du mode Farm : `app/src/main/assets/farm/` (exemples dans `exemples_images/farm/`).

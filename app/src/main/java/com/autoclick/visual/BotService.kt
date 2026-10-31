@@ -81,6 +81,7 @@ class BotService : Service() {
     private var lastMeat: Mat? = null
     private var compassArmedAt = 0L // instant du dernier « Victoire » / « Secourir » (0 = rien à attendre)
     private var compassDelayMs = 3000L
+    private var mode = "intel" // « intel » (missions de renseignements) ou « farm »
     private var minMeat = 20
     private var harvestMin = 5
     private var statChecks = 0
@@ -134,6 +135,7 @@ class BotService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        mode = intent?.getStringExtra("mode") ?: "intel"
         if (!OpenCVLoader.initLocal()) {
             toast("OpenCV : échec du chargement")
             stopSelf()
@@ -145,7 +147,7 @@ class BotService : Service() {
         handler = Handler(thread!!.looper)
 
         loadConfig()
-        log("démarrage : seuil $threshold, boussole ${compassDelayMs / 1000} s, viande min $minMeat")
+        log("démarrage ($mode) : seuil $threshold, boussole ${compassDelayMs / 1000} s, viande min $minMeat")
 
         val mpm = getSystemService(MediaProjectionManager::class.java)
         val proj = mpm.getMediaProjection(code, data)
@@ -157,10 +159,15 @@ class BotService : Service() {
         }, handler)
 
         setupDisplay()
-        loadTemplates()
-        loadGate()
-        loadCompass()
+        if (mode == "farm") {
+            loadFarm()
+        } else {
+            loadTemplates()
+            loadGate()
+            loadCompass()
+        }
         addOverlay()
+        addMenuButton()
         handler.post(tick)
         return START_NOT_STICKY
     }
@@ -379,6 +386,10 @@ class BotService : Service() {
     }
 
     private fun detectAndClick(screen: Mat, rgb: Mat, meat: Mat) {
+        if (mode == "farm") {
+            detectFarm(screen, rgb)
+            return
+        }
         val now = SystemClock.uptimeMillis()
         if (now - lastClick < cooldown) return
         // 1) boutons du jeu (intégrés) et images ajoutées par l'utilisateur
@@ -635,6 +646,226 @@ class BotService : Service() {
         return Pair((bestX / SCALE).toFloat(), (bestY / SCALE).toFloat())
     }
 
+    // ---------- Mode Farm ----------
+
+    private val farm = HashMap<String, Mat>()
+    private val farmTasks = mutableListOf<String>()
+    private var farmIdx = 0
+    private var tileClickedIdx = -1
+    private var searchedAt = 0L
+    private var taskStartedAt = 0L
+    private var farmFinished = false
+    private val farmKinds = listOf("PAIN", "BOIS", "PIERRE", "FER")
+    private val farmTiles = mapOf("PAIN" to "tile_pain", "BOIS" to "tile_bois", "PIERRE" to "tile_pierre", "FER" to "tile_fer")
+
+    /** Images du mode Farm (prises sur 1080 px) et plan de récolte choisi dans l'appli. */
+    private fun loadFarm() {
+        val names = listOf(
+            "loupe", "tile_pain", "tile_bois", "tile_pierre", "tile_fer", "tile_terreur",
+            "rechercher", "collecte_dialog", "demanteler", "squad_collecte", "deployer_farm"
+        )
+        for (name in names) {
+            try {
+                val bmp = assets.open("farm/$name.png").use { BitmapFactory.decodeStream(it) } ?: continue
+                val rgba = Mat()
+                Utils.bitmapToMat(bmp, rgba)
+                bmp.recycle()
+                val gray = Mat()
+                Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+                rgba.release()
+                val f = SCALE * w / 1080.0
+                val small = Mat()
+                Imgproc.resize(gray, small, Size(), f, f, Imgproc.INTER_AREA)
+                gray.release()
+                farm[name] = small
+            } catch (_: Exception) {
+            }
+        }
+        val sp = getSharedPreferences("cfg", MODE_PRIVATE)
+        farmTasks.clear()
+        if (sp.getBoolean("farmGrand", true)) farmTasks.add("GRAND")
+        for ((key, kind) in listOf("farmPain" to "PAIN", "farmBois" to "BOIS", "farmPierre" to "PIERRE", "farmFer" to "FER")) {
+            repeat(sp.getInt(key, 0).coerceIn(0, 6)) { farmTasks.add(kind) }
+        }
+        while (farmTasks.size > 6) farmTasks.removeAt(farmTasks.size - 1)
+        farmIdx = 0
+        tileClickedIdx = -1
+        searchedAt = 0L
+        taskStartedAt = 0L
+        farmFinished = false
+        log("farm : plan ${farmTasks.joinToString(", ")}")
+    }
+
+    private fun farmMatch(screen: Mat, name: String, thr: Double = threshold): Core.MinMaxLocResult? {
+        val t = farm[name] ?: return null
+        val mm = matchBest(screen, t) ?: return null
+        return if (mm.maxVal >= thr) mm else null
+    }
+
+    private fun farmCenter(name: String, mm: Core.MinMaxLocResult): Pair<Float, Float> {
+        val t = farm[name]!!
+        return Pair(
+            ((mm.maxLoc.x + t.cols() / 2.0) / SCALE).toFloat(),
+            ((mm.maxLoc.y + t.rows() / 2.0) / SCALE).toFloat()
+        )
+    }
+
+    private fun farmClick(x: Float, y: Float, msg: String) {
+        lastClick = SystemClock.uptimeMillis()
+        ClickAccessibilityService.instance?.click(x, y)
+        log(msg)
+    }
+
+    private fun nextFarmTask() {
+        log("farm : tâche ${farmIdx + 1}/${farmTasks.size} terminée")
+        farmIdx++
+        tileClickedIdx = -1
+        searchedAt = 0L
+        taskStartedAt = 0L
+    }
+
+    /**
+     * Enchaînement : loupe > liste de tuiles (grand / pain / bois / pierre / fer) > Rechercher >
+     * fenêtre « Collecte » > (grand : écran de l'escouade > Collecte) > Déployer. Un grand déjà lancé
+     * (bouton Collecte gris) : flèche retour en haut à gauche, tâche suivante.
+     */
+    private fun detectFarm(screen: Mat, rgb: Mat) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClick < cooldown) return
+        if (farmIdx >= farmTasks.size) {
+            if (!farmFinished) {
+                farmFinished = true
+                log("farm terminé")
+                main.post { pauseBot("Farm terminé : toutes les récoltes sont lancées") }
+            }
+            return
+        }
+        if (taskStartedAt == 0L) taskStartedAt = now
+        val task = farmTasks[farmIdx]
+        if (now - taskStartedAt > 120_000) {
+            log("farm : tâche $task abandonnée (2 min sans résultat)")
+            nextFarmTask()
+            return
+        }
+
+        // 1) envoyer la récolte
+        val md = farmMatch(screen, "deployer_farm")
+        if (md != null) {
+            val (x, y) = farmCenter("deployer_farm", md)
+            farmClick(x, y, "farm : clic Déployer (%.2f) pour $task".format(md.maxVal))
+            nextFarmTask()
+            return
+        }
+        // 2) écran de l'escouade du grand bâtiment : bouton bleu = on collecte, gris = déjà lancé
+        if (task == "GRAND") {
+            val ms = farmMatch(screen, "squad_collecte")
+            if (ms != null) {
+                val t = farm["squad_collecte"]!!
+                val roi = Mat(rgb, Rect(ms.maxLoc.x.toInt(), ms.maxLoc.y.toInt(), t.cols(), t.rows()))
+                val hsv = Mat()
+                Imgproc.cvtColor(roi, hsv, Imgproc.COLOR_RGB2HSV)
+                val sat = Core.mean(hsv).`val`[1]
+                hsv.release()
+                if (sat < 90) {
+                    lastClick = now
+                    ClickAccessibilityService.instance?.click((0.069 * w).toFloat(), (0.13 * w).toFloat())
+                    log("farm : grand déjà lancé (bouton gris, saturation %.0f) : flèche retour".format(sat))
+                    nextFarmTask()
+                } else {
+                    val (x, y) = farmCenter("squad_collecte", ms)
+                    farmClick(x, y, "farm : clic Collecte (escouade, saturation %.0f)".format(sat))
+                }
+                return
+            }
+        }
+        // 3) fenêtre « Collecte » sur la carte : celle du grand porte aussi un bouton « Démanteler »
+        val mc = farmMatch(screen, "collecte_dialog")
+        if (mc != null) {
+            val grandDialog = farmMatch(screen, "demanteler", 0.8) != null
+            if ((task == "GRAND") == grandDialog) {
+                val (x, y) = farmCenter("collecte_dialog", mc)
+                searchedAt = 0L
+                farmClick(x, y, "farm : clic Collecte (fenêtre %s)".format(if (grandDialog) "du grand" else "du petit"))
+                return
+            }
+        }
+        // 4) on attend le résultat de la recherche
+        if (searchedAt > 0L && now - searchedAt < 9_000L) return
+        // 5) liste de tuiles ouverte
+        val mr = farmMatch(screen, "rechercher", 0.8)
+        if (mr != null) {
+            if (tileClickedIdx == farmIdx) {
+                val (x, y) = farmCenter("rechercher", mr)
+                searchedAt = now
+                farmClick(x, y, "farm : clic Rechercher pour $task")
+            } else {
+                selectTile(screen, task, now)
+            }
+            return
+        }
+        // 6) carte du monde : la loupe ouvre la liste
+        val ml = farmMatch(screen, "loupe", 0.85)
+        if (ml != null) {
+            val (x, y) = farmCenter("loupe", ml)
+            farmClick(x, y, "farm : clic loupe")
+        }
+    }
+
+    /** Repère la rangée de tuiles (pas fixe ~236 px) et touche celle de la tâche ; fait défiler si besoin. */
+    private fun selectTile(screen: Mat, task: String, now: Long) {
+        val pitch = 236.5 * w / 1080.0
+        var sumX = 0.0
+        var sumY = 0.0
+        var n = 0
+        for ((i, k) in farmKinds.withIndex()) {
+            val name = farmTiles[k] ?: continue
+            val t = farm[name] ?: continue
+            val mm = matchBest(screen, t) ?: continue
+            if (mm.maxVal >= 0.8) {
+                sumX += (mm.maxLoc.x + t.cols() / 2.0) / SCALE - i * pitch
+                sumY += (mm.maxLoc.y + t.rows() / 2.0) / SCALE
+                n++
+            }
+        }
+        if (n == 0) {
+            // Position de la liste inconnue : on la ramène vers le début.
+            swipeRow(0.76 * h, 0.5 * w, now)
+            log("farm : aucune tuile reconnue, retour au début de la liste")
+            return
+        }
+        val painX = sumX / n
+        val rowY = sumY / n
+        if (task == "GRAND") {
+            // Ordre de la liste : Bêtes, Terreur, [grand], Pain... : sans grand, Terreur est juste avant Pain.
+            val mt = farmMatch(screen, "tile_terreur", 0.8)
+            if (mt != null) {
+                val tx = (mt.maxLoc.x + farm["tile_terreur"]!!.cols() / 2.0) / SCALE
+                if (painX - tx < 1.5 * pitch) {
+                    log("farm : pas de grand bâtiment disponible, on passe")
+                    nextFarmTask()
+                    return
+                }
+            }
+        }
+        val idx = farmKinds.indexOf(task) // -1 pour le grand : une case avant Pain
+        val targetX = painX + idx * pitch
+        if (targetX < 0.12 * w || targetX > 0.88 * w) {
+            swipeRow(rowY, (0.5 * w - targetX).coerceIn(-0.6 * w, 0.6 * w), now)
+            log("farm : défilement de la liste pour atteindre $task")
+            return
+        }
+        tileClickedIdx = farmIdx
+        farmClick(targetX.toFloat(), rowY.toFloat(), "farm : clic tuile $task en (%d, %d)".format(targetX.toInt(), rowY.toInt()))
+    }
+
+    /** Fait glisser la liste de [shift] px (positif = vers la droite) puis laisse le temps à l'animation. */
+    private fun swipeRow(y: Double, shift: Double, now: Long) {
+        val x1 = (0.5 * w - shift / 2).toFloat()
+        val x2 = (0.5 * w + shift / 2).toFloat()
+        ClickAccessibilityService.instance?.swipe(x1, y.toFloat(), x2, y.toFloat(), 350)
+        lastClick = now + 600
+    }
+
     // ---------- Bouton flottant ----------
 
     private fun addOverlay() {
@@ -692,9 +923,55 @@ class BotService : Service() {
         overlayParams = lp
     }
 
+    private var menuBtn: TextView? = null
+
+    /** Petit bouton ☰ en haut de l'écran : arrête le bot et revient au menu de l'application. */
+    private fun addMenuButton() {
+        val size = (44 * resources.displayMetrics.density).toInt()
+        val tv = TextView(this).apply {
+            text = "☰"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xCC37474F.toInt())
+            }
+            setOnClickListener { openMenu() }
+        }
+        val lp = WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 150
+        }
+        wm.addView(tv, lp)
+        menuBtn = tv
+    }
+
+    private fun openMenu() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        )
+        stopSelf()
+    }
+
     private fun toggle(tv: TextView) {
         running = !running
-        if (running) lastClick = SystemClock.uptimeMillis()
+        if (running) {
+            lastClick = SystemClock.uptimeMillis()
+            if (mode == "farm") {
+                if (farmIdx >= farmTasks.size) { farmIdx = 0; farmFinished = false; tileClickedIdx = -1 }
+                taskStartedAt = 0L
+                searchedAt = 0L
+            }
+        }
         tv.text = if (running) "⏸" else "▶"
         (tv.background as GradientDrawable)
             .setColor(if (running) 0xCCC62828.toInt() else 0xCC2E7D32.toInt())
@@ -732,6 +1009,8 @@ class BotService : Service() {
         }
         try { overlay?.let { wm.removeView(it) } } catch (_: Exception) {}
         overlay = null
+        try { menuBtn?.let { wm.removeView(it) } } catch (_: Exception) {}
+        menuBtn = null
         vd?.release()
         reader?.close()
         projection?.stop()
@@ -740,6 +1019,8 @@ class BotService : Service() {
         templates.clear()
         lastGray?.release()
         lastRgb?.release()
+        farm.values.forEach { it.release() }
+        farm.clear()
         gates.forEach { it.release() }
         compass?.release()
         lastMeat?.release()
