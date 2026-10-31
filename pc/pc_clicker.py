@@ -73,6 +73,10 @@ def find_pin(small_bgr):
     hsv = cv2.cvtColor(small_bgr, cv2.COLOR_BGR2HSV)
     sw = small_bgr.shape[1]
     best = None
+    # pastilles « coche verte » = pin déjà fait : à éviter
+    cm = cv2.inRange(hsv, (44, 110, 160), (58, 255, 255))
+    nc, _, cst, ccen = cv2.connectedComponentsWithStats(cm)
+    checks = [(ccen[j][0], ccen[j][1], cst[j][4]) for j in range(1, nc)]
     for lo, hi in PIN_RANGES:
         m = cv2.inRange(hsv, lo, hi)
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
@@ -83,6 +87,9 @@ def find_pin(small_bgr):
             if w < 0.085 * sw or w > 0.125 * sw or h < 0.11 * sw or h > 0.185 * sw:
                 continue
             if h / w < 1.1 or h / w > 1.8 or a > 0.0105 * sw * sw:
+                continue
+            if any(abs(kx - (x + 0.81 * w)) < 0.35 * w and abs(ky - (y + 0.23 * w)) < 0.35 * w
+                   and ka >= 0.004 * w * w for kx, ky, ka in checks):
                 continue
             cx, cy = x + w / 2, y + 0.4 * h
             if best is None or cy < best[1]:

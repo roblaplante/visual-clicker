@@ -83,10 +83,10 @@ class MainActivity : AppCompatActivity() {
             )
         })
 
-        root.addView(button("3. Ajouter une image à détecter") { pickImage.launch("image/*") })
+        root.addView(button("3. (Facultatif) Ajouter une image à détecter en plus") { pickImage.launch("image/*") })
         countView = label("")
         root.addView(countView)
-        root.addView(button("Supprimer toutes les images") {
+        root.addView(button("Supprimer mes images ajoutées") {
             dir.listFiles()?.forEach { it.delete() }
             refresh()
         })
@@ -136,7 +136,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun refresh() {
         val n = dir.listFiles()?.size ?: 0
-        countView.text = "$n image(s) enregistrée(s) (testées dans l'ordre d'ajout)"
+        countView.text = "Boutons du jeu et pins déjà intégrés. $n image(s) supplémentaire(s) ajoutée(s)."
         thresholdLabel.text = "Seuil de confiance : ${55 + thresholdBar.progress} %"
     }
 
@@ -159,10 +159,6 @@ class MainActivity : AppCompatActivity() {
         }
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Autorisez d'abord l'affichage par-dessus (étape 2)", Toast.LENGTH_LONG).show()
-            return
-        }
-        if ((dir.listFiles()?.size ?: 0) == 0) {
-            Toast.makeText(this, "Ajoutez au moins une image (étape 3)", Toast.LENGTH_LONG).show()
             return
         }
         sp.edit()

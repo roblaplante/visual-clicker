@@ -113,10 +113,6 @@ class BotService : Service() {
         handler = Handler(thread!!.looper)
 
         loadConfig()
-        loadTemplates()
-        if (templates.isEmpty()) {
-            toast("Aucune image à détecter : ajoutez-en dans l'application")
-        }
 
         val mpm = getSystemService(MediaProjectionManager::class.java)
         val proj = mpm.getMediaProjection(code, data)
@@ -128,6 +124,7 @@ class BotService : Service() {
         }, handler)
 
         setupDisplay()
+        loadTemplates()
         loadGate()
         addOverlay()
         handler.post(tick)
@@ -143,20 +140,31 @@ class BotService : Service() {
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
     }
 
+    private fun addTemplate(bmp: Bitmap, factor: Double) {
+        val rgba = Mat()
+        Utils.bitmapToMat(bmp, rgba)
+        bmp.recycle()
+        val gray = Mat()
+        Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+        rgba.release()
+        val small = Mat()
+        Imgproc.resize(gray, small, Size(), factor, factor, Imgproc.INTER_AREA)
+        gray.release()
+        templates.add(small)
+    }
+
+    /** Images intégrées (boutons du jeu, prises sur un écran de 1080 px) puis images ajoutées par l'utilisateur. */
     private fun loadTemplates() {
-        val dir = File(filesDir, "templates")
-        dir.listFiles()?.sortedBy { it.name }?.forEach { f ->
+        try {
+            assets.list("templates")?.sorted()?.forEach { name ->
+                val bmp = assets.open("templates/$name").use { BitmapFactory.decodeStream(it) } ?: return@forEach
+                addTemplate(bmp, SCALE * w / 1080.0)
+            }
+        } catch (_: Exception) {
+        }
+        File(filesDir, "templates").listFiles()?.sortedBy { it.name }?.forEach { f ->
             val bmp = BitmapFactory.decodeFile(f.absolutePath) ?: return@forEach
-            val rgba = Mat()
-            Utils.bitmapToMat(bmp, rgba)
-            bmp.recycle()
-            val gray = Mat()
-            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
-            rgba.release()
-            val small = Mat()
-            Imgproc.resize(gray, small, Size(), SCALE, SCALE, Imgproc.INTER_AREA)
-            gray.release()
-            templates.add(small)
+            addTemplate(bmp, SCALE)
         }
     }
 
@@ -343,6 +351,23 @@ class BotService : Service() {
         val hsv = Mat()
         Imgproc.cvtColor(rgb, hsv, Imgproc.COLOR_RGB2HSV)
         val sw = rgb.cols().toDouble()
+        // Pastilles « coche verte » = pin déjà fait (teinte jaune-vert, distincte du vert de la carte).
+        val checkMask = Mat()
+        Core.inRange(hsv, Scalar(44.0, 110.0, 160.0), Scalar(58.0, 255.0, 255.0), checkMask)
+        val cLabels = Mat()
+        val cStats = Mat()
+        val cCents = Mat()
+        val cn = Imgproc.connectedComponentsWithStats(checkMask, cLabels, cStats, cCents)
+        val checks = ArrayList<DoubleArray>()
+        for (j in 1 until cn) {
+            checks.add(
+                doubleArrayOf(
+                    cCents.get(j, 0)[0], cCents.get(j, 1)[0],
+                    cStats.get(j, Imgproc.CC_STAT_AREA)[0]
+                )
+            )
+        }
+        checkMask.release(); cLabels.release(); cStats.release(); cCents.release()
         val k5 = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
         val k3 = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
         var bestX = 0.0
@@ -364,6 +389,12 @@ class BotService : Service() {
                 val a = stats.get(i, Imgproc.CC_STAT_AREA)[0]
                 if (w < 0.085 * sw || w > 0.125 * sw || h < 0.11 * sw || h > 0.185 * sw) continue
                 if (h / w < 1.1 || h / w > 1.8 || a > 0.0105 * sw * sw) continue
+                val done = checks.any {
+                    abs(it[0] - (x + 0.81 * w)) < 0.35 * w &&
+                        abs(it[1] - (y + 0.23 * w)) < 0.35 * w &&
+                        it[2] >= 0.004 * w * w
+                }
+                if (done) continue
                 val cy = y + 0.4 * h
                 if (cy < bestY) {
                     bestY = cy

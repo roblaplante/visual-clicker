@@ -30,6 +30,8 @@ quel que soit le dessin, et clique sur le plus haut. Le pin hexagonal (tête de 
 plus large et plus gros. Test sur 4 captures : tous les pins trouvés (tente et épées mauves incluses),
 hexagone jamais retenu.
 
-## Images à importer, dans cet ordre (dossier `a_importer/`)
-01 Victoire · 02 Combattre · 03 Déployer · 04 Attaquer · 05 Conquérir · 06 Voir
-Seuil conseillé : 85 %. Les titres intégrés sont mis à l'échelle de l'écran. Les 6 boutons existent seulement en français : en anglais il faut refaire ces 6 recadrages.
+## Images des boutons
+Les 6 boutons du jeu (Victoire, Combattre, Déployer, Attaquer, Conquérir, Voir) sont intégrés à l'appli
+(`app/src/main/assets/templates/`) : rien à importer. Seuil conseillé : 85 %.
+Les pins déjà faits (coche verte) sont ignorés. Exemples : `exemples_images/pin_tente_bleu.png`,
+`exemples_images/carte_pins_coches.png`.
