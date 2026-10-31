@@ -195,7 +195,8 @@ class BotService : Service() {
         interval = sp.getLong("interval", 500L).coerceAtLeast(100L)
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
         minMeat = sp.getInt("minMeat", 20)
-        marchTotal = sp.getInt("marchTotal", 5).coerceIn(1, 6)
+        // Farm : le total vient du choix « 5 ou 6 marches » ; missions de renseignements : de leur réglage.
+        marchTotal = (if (mode == "farm") sp.getInt("farmMarches", 5) else sp.getInt("marchTotal", 5)).coerceIn(1, 6)
         harvestMin = sp.getInt("harvestMin", 5).coerceIn(0, 50)
         idleMs = sp.getInt("idleSec", 30).coerceIn(0, 3600) * 1000L
         pinMemoryMs = sp.getInt("pinMemory", 20).coerceIn(0, 600) * 60_000L
@@ -903,11 +904,14 @@ class BotService : Service() {
             }
         }
         val sp = getSharedPreferences("cfg", MODE_PRIVATE)
-        farmGrand = sp.getBoolean("farmGrand", true)
-        farmTarget["PAIN"] = sp.getInt("farmPain", 0).coerceIn(0, 6)
-        farmTarget["BOIS"] = sp.getInt("farmBois", 0).coerceIn(0, 6)
-        farmTarget["PIERRE"] = sp.getInt("farmPierre", 0).coerceIn(0, 6)
-        farmTarget["FER"] = sp.getInt("farmFer", 0).coerceIn(0, 6)
+        // Chaque cas (5 ou 6 marches) a ses réglages ; pour 5 marches, on reprend l'ancien réglage commun s'il existe.
+        val n = marchTotal
+        fun gi(name: String, def: Int) = sp.getInt("farm$n$name", if (n == 5) sp.getInt("farm$name", def) else def)
+        farmGrand = sp.getBoolean("farm${n}Grand", if (n == 5) sp.getBoolean("farmGrand", true) else true)
+        farmTarget["PAIN"] = gi("Pain", 1).coerceIn(0, 6)
+        farmTarget["BOIS"] = gi("Bois", 1).coerceIn(0, 6)
+        farmTarget["PIERRE"] = gi("Pierre", 1).coerceIn(0, 6)
+        farmTarget["FER"] = gi("Fer", if (n == 6) 2 else 1).coerceIn(0, 6)
         farmCap = marchTotal
         buildPlan(null)
     }

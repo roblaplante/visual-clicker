@@ -85,3 +85,6 @@ continuent. Farm : on ne lance pas plus de récoltes que de marches libres.
 Grand repéré par sa pastille blanche (en bas à droite de son icône dans le panneau des marches), même quand son temps
 restant est sous 7 h. Plafond de récoltes = marches libres moins les récoltes réellement envoyées : un grand sauté
 (déjà en cours, bouton Rappeler ou indisponible) ne consomme pas de marche.
+
+Menu Farm : un premier écran demande « 5 ou 6 marches ? », puis les réglages de récolte (grand, pain, bois, pierre, fer) sont
+propres à chaque cas et enregistrés séparément. Le total de marches du Farm vient de ce choix (plus de question dans les réglages).

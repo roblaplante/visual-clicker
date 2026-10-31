@@ -35,7 +35,8 @@ import java.io.FileOutputStream
  */
 class MainActivity : AppCompatActivity() {
 
-    private var screen = 0 // 0 = menu, 1 = missions de renseignements, 2 = farm
+    private var screen = 0 // 0 = menu, 1 = missions de renseignements, 2 = farm (réglages), 3 = farm (5 ou 6 marches ?)
+    private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
     private var pendingMode = "intel"
 
     // Réglages communs aux deux modes
@@ -87,7 +88,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (screen != 0) {
+                if (screen == 2) {
+                    saveSettings()
+                    showFarmChoice()
+                } else if (screen != 0) {
                     saveSettings()
                     showMenu()
                 } else {
@@ -146,7 +150,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(label("Choisissez ce que l'application doit faire à votre place."))
 
         root.addView(button("Missions de renseignements") { showIntel() })
-        root.addView(button("Farm") { showFarm() })
+        root.addView(button("Farm") { showFarmChoice() })
 
         root.addView(label("Autorisations (à faire une seule fois)"))
         root.addView(button("Activer le service d'accessibilité") {
@@ -175,7 +179,7 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Réglages communs ----------
 
-    private fun addCommonSettings(root: LinearLayout) {
+    private fun addCommonSettings(root: LinearLayout, withMarches: Boolean) {
         thresholdLabel = label("")
         root.addView(thresholdLabel)
         thresholdBar = SeekBar(this).apply {
@@ -206,9 +210,11 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(cooldownEdit)
 
-        root.addView(label("Nombre total de marches (5 ou 6) : les chasses à tête de loup et les récoltes en ont besoin"))
-        marchEdit = numberField("marchTotal", 5)
-        root.addView(marchEdit)
+        if (withMarches) {
+            root.addView(label("Nombre total de marches (5 ou 6) : les chasses à tête de loup en ont besoin"))
+            marchEdit = numberField("marchTotal", 5)
+            root.addView(marchEdit)
+        }
     }
 
     // ---------- Missions de renseignements ----------
@@ -228,7 +234,7 @@ class MainActivity : AppCompatActivity() {
         })
         refreshCount()
 
-        addCommonSettings(root)
+        addCommonSettings(root, true)
 
         root.addView(label("Viande minimum avant d'attaquer un pin (0 = ne pas vérifier)"))
         meatEdit = numberField("minMeat", 20)
@@ -255,11 +261,44 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Farm ----------
 
+    /** Première question du Farm : 5 ou 6 marches. Chaque cas garde ses propres réglages. */
+    private fun showFarmChoice() {
+        screen = 3
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Farm"; textSize = 22f })
+        root.addView(label("Combien de marches avez-vous ?"))
+        root.addView(button("5 marches") { farmN = 5; showFarm() })
+        root.addView(button("6 marches") { farmN = 6; showFarm() })
+        root.addView(
+            label(
+                "Les réglages de récolte sont enregistrés séparément pour chaque cas. " +
+                    "Dernier choix : ${sp.getInt("farmMarches", 5)} marches."
+            )
+        )
+    }
+
+    private fun farmKey(name: String) = "farm$farmN$name"
+
+    /** Réglage du cas courant ; pour 5 marches, reprend l'ancien réglage commun s'il existe. */
+    private fun farmInt(name: String, def: Int): Int =
+        sp.getInt(farmKey(name), if (farmN == 5) sp.getInt("farm$name", def) else def)
+
+    private fun farmField(name: String, def: Int, watcher: TextWatcher): EditText = EditText(this).apply {
+        inputType = InputType.TYPE_CLASS_NUMBER
+        setText(farmInt(name, def).toString())
+        addTextChangedListener(watcher)
+    }
+
     private fun showFarm() {
         screen = 2
         val root = newRoot()
         root.addView(backToMenuButton())
-        root.addView(TextView(this).apply { text = "Farm"; textSize = 22f })
+        root.addView(button("Changer le nombre de marches") {
+            saveSettings()
+            showFarmChoice()
+        })
+        root.addView(TextView(this).apply { text = "Farm : $farmN marches"; textSize = 22f })
         root.addView(
             label(
                 "Ouvrez le jeu sur la carte du monde. L'appli touche la loupe, choisit les récoltes " +
@@ -269,7 +308,7 @@ class MainActivity : AppCompatActivity() {
 
         grandCheck = CheckBox(this).apply {
             text = "Grande récolte (bâtiment d'alliance, s'il est disponible)"
-            isChecked = sp.getBoolean("farmGrand", true)
+            isChecked = sp.getBoolean(farmKey("Grand"), if (farmN == 5) sp.getBoolean("farmGrand", true) else true)
         }
         root.addView(grandCheck)
 
@@ -281,22 +320,22 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(label("Petites récoltes : nombre de marches par ressource"))
         root.addView(label("Pain"))
-        painEdit = numberField("farmPain", 0).also { it.addTextChangedListener(watcher) }
+        painEdit = farmField("Pain", 1, watcher)
         root.addView(painEdit)
         root.addView(label("Bois"))
-        boisEdit = numberField("farmBois", 1).also { it.addTextChangedListener(watcher) }
+        boisEdit = farmField("Bois", 1, watcher)
         root.addView(boisEdit)
         root.addView(label("Pierre"))
-        pierreEdit = numberField("farmPierre", 2).also { it.addTextChangedListener(watcher) }
+        pierreEdit = farmField("Pierre", 1, watcher)
         root.addView(pierreEdit)
         root.addView(label("Fer"))
-        ferEdit = numberField("farmFer", 2).also { it.addTextChangedListener(watcher) }
+        ferEdit = farmField("Fer", if (farmN == 6) 2 else 1, watcher)
         root.addView(ferEdit)
         grandCheck.setOnCheckedChangeListener { _, _ -> refreshFarmTotal() }
         root.addView(farmTotal)
         refreshFarmTotal()
 
-        addCommonSettings(root)
+        addCommonSettings(root, false)
 
         root.addView(button("Démarrer") { start("farm") })
     }
@@ -307,11 +346,11 @@ class MainActivity : AppCompatActivity() {
         if (screen != 2 || !::farmTotal.isInitialized) return
         val total = (if (grandCheck.isChecked) 1 else 0) +
             farmCount(painEdit) + farmCount(boisEdit) + farmCount(pierreEdit) + farmCount(ferEdit)
-        farmTotal.text = if (total > 6) {
+        farmTotal.text = if (total > farmN) {
             "Total : $total. Le grand couvre une récolte de son type (Scierie = bois, Moulin = pain, " +
-                "Carrière = pierre, Mine = fer) : une petite de ce type en moins. 6 marches au maximum."
+                "Carrière = pierre, Mine = fer) : une petite de ce type en moins. $farmN marches au maximum."
         } else {
-            "Total : $total récolte(s) sur 6 marches (le grand couvre une récolte de son type)."
+            "Total : $total récolte(s) sur $farmN marches (le grand couvre une récolte de son type)."
         }
     }
 
@@ -336,24 +375,25 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
-        if (screen == 0) return
+        if (screen == 0 || screen == 3) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
         e.putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
-        e.putInt("marchTotal", (marchEdit.text.toString().toIntOrNull() ?: 5).coerceIn(1, 6))
         if (screen == 1) {
+            e.putInt("marchTotal", (marchEdit.text.toString().toIntOrNull() ?: 5).coerceIn(1, 6))
             e.putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
             e.putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
             e.putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
             e.putInt("idleSec", idleEdit.text.toString().toIntOrNull() ?: 30)
             e.putInt("harvestMin", harvestEdit.text.toString().toIntOrNull() ?: 5)
         } else {
-            e.putBoolean("farmGrand", grandCheck.isChecked)
-            e.putInt("farmPain", farmCount(painEdit))
-            e.putInt("farmBois", farmCount(boisEdit))
-            e.putInt("farmPierre", farmCount(pierreEdit))
-            e.putInt("farmFer", farmCount(ferEdit))
+            e.putInt("farmMarches", farmN)
+            e.putBoolean(farmKey("Grand"), grandCheck.isChecked)
+            e.putInt(farmKey("Pain"), farmCount(painEdit))
+            e.putInt(farmKey("Bois"), farmCount(boisEdit))
+            e.putInt(farmKey("Pierre"), farmCount(pierreEdit))
+            e.putInt(farmKey("Fer"), farmCount(ferEdit))
         }
         e.apply()
     }
