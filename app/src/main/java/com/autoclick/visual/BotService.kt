@@ -81,6 +81,11 @@ class BotService : Service() {
     private var compassArmedAt = 0L // instant du dernier « Victoire » / « Secourir » (0 = rien à attendre)
     private var compassDelayMs = 3000L
     private var minMeat = 20
+    private var idleMs = 30_000L
+    private var lastIdleLog = 0L
+    private var statCand = 0
+    private var statDone = 0
+    private var statSeen = 0
     private var pinMemoryMs = 20 * 60_000L
     private class PinSeen(val x: Double, val y: Double, val t: Long)
     private val pinsSeen = mutableListOf<PinSeen>() // pins déjà lancés : on ne les reclique pas tout de suite
@@ -162,6 +167,7 @@ class BotService : Service() {
         interval = sp.getLong("interval", 500L).coerceAtLeast(100L)
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
         minMeat = sp.getInt("minMeat", 20)
+        idleMs = sp.getInt("idleSec", 30).coerceIn(0, 3600) * 1000L
         pinMemoryMs = sp.getInt("pinMemory", 20).coerceIn(0, 600) * 60_000L
         compassDelayMs = sp.getInt("compassDelay", 3).coerceIn(0, 60) * 1000L
     }
@@ -428,8 +434,31 @@ class BotService : Service() {
             }
         }
         // 3) écran des pins (« Mission de renseignements » / « Intel Mission »)
-        if (!onPinScreen) return
-        val pin = findPin(rgb) ?: return
+        if (!onPinScreen) {
+            // Inactif depuis un moment sur la carte du monde (ex. la carte des pins s'est fermée à
+            // son actualisation) : on rouvre la carte des pins avec la boussole.
+            if (idleMs > 0 && compassArmedAt == 0L && now - lastClick > idleMs) {
+                val c = compass
+                val mm = if (c != null) matchBest(screen, c) else null
+                if (c != null && mm != null && mm.maxVal >= 0.85) {
+                    val cx = ((mm.maxLoc.x + c.cols() / 2.0) / SCALE).toFloat()
+                    val cy = ((mm.maxLoc.y + c.rows() / 2.0) / SCALE).toFloat()
+                    lastClick = now
+                    ClickAccessibilityService.instance?.click(cx, cy)
+                    log("inactif ${idleMs / 1000} s sur la carte du monde : clic boussole")
+                    toast("Reprise : retour à la carte des pins")
+                }
+            }
+            return
+        }
+        val pin = findPin(rgb)
+        if (pin == null) {
+            if (now - lastIdleLog > 20_000) {
+                lastIdleLog = now
+                log("carte des pins : $statCand pins vus, $statDone cochés, $statSeen déjà lancés : rien à cliquer")
+            }
+            return
+        }
         if (!enoughMeat(meat)) return
         lastClick = now
         pinsSeen.removeAll { now - it.t > pinMemoryMs }
@@ -528,6 +557,7 @@ class BotService : Service() {
         val k3 = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
         var bestX = 0.0
         var bestY = Double.MAX_VALUE
+        statCand = 0; statDone = 0; statSeen = 0
         for ((lo, hi) in pinRanges) {
             val mask = Mat()
             Core.inRange(hsv, lo, hi, mask)
@@ -545,16 +575,17 @@ class BotService : Service() {
                 val a = stats.get(i, Imgproc.CC_STAT_AREA)[0]
                 if (w < 0.085 * sw || w > 0.125 * sw || h < 0.11 * sw || h > 0.185 * sw) continue
                 if (h / w < 1.1 || h / w > 1.8 || a > 0.0105 * sw * sw) continue
+                statCand++
                 val done = checks.any {
                     abs(it[0] - (x + 0.81 * w)) < 0.35 * w &&
                         abs(it[1] - (y + 0.23 * w)) < 0.35 * w &&
                         it[2] >= 0.004 * w * w
                 }
-                if (done) continue
+                if (done) { statDone++; continue }
                 val fx = (x + w / 2) / SCALE
                 val fy = (y + 0.4 * h) / SCALE
                 val tnow = SystemClock.uptimeMillis()
-                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.8 * w / SCALE && abs(it.y - fy) < 0.8 * w / SCALE }) continue
+                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.8 * w / SCALE && abs(it.y - fy) < 0.8 * w / SCALE }) { statSeen++; continue }
                 val cy = y + 0.4 * h
                 if (cy < bestY) {
                     bestY = cy
@@ -627,6 +658,7 @@ class BotService : Service() {
 
     private fun toggle(tv: TextView) {
         running = !running
+        if (running) lastClick = SystemClock.uptimeMillis()
         tv.text = if (running) "⏸" else "▶"
         (tv.background as GradientDrawable)
             .setColor(if (running) 0xCCC62828.toInt() else 0xCC2E7D32.toInt())

@@ -46,3 +46,7 @@ Tente : pin > Voir > Secourir > (on reste sur la carte du monde) > boussole > ca
 
 Ours : après « Déployer » (troupes parties), boussole tout de suite (délai réglable) pour lancer le pin suivant pendant la marche.
 Un pin déjà lancé n'est pas recliqué pendant 20 minutes (réglable) : sa coche verte n'apparaît qu'après la victoire.
+
+Reprise : si rien ne se passe pendant 30 s (réglable) sur la carte du monde, l'appli clique la boussole pour rouvrir
+la carte des pins (utile quand elle se ferme à l'actualisation). Quand aucun pin n'est cliquable, le journal indique
+combien de pins sont vus, cochés ou déjà lancés.

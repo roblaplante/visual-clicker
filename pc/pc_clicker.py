@@ -123,7 +123,8 @@ def read_meat(img):
         return None
 
 
-STATE = {"armed_at": 0.0}
+STATE = {"armed_at": 0.0, "last_click": time.time()}
+IDLE_SECONDS = 30.0  # option --idle
 COMPASS_DELAY = 3.0  # secondes à attendre après une victoire / un secours (option --compass-delay)
 
 
@@ -155,7 +156,13 @@ def detect(img, templates, gates, threshold, compass=None, min_meat=0):
             if since >= COMPASS_DELAY + 6:  # repli : la boussole est toujours au même endroit
                 STATE["armed_at"] = 0.0
                 return f"boussole en position fixe (meilleur score {score:.2f})", int(0.921 * img.shape[1]), int(0.732 * img.shape[0])
-    if any(best_match(gray, g)[0] >= 0.85 for g in gates):
+    on_pins = any(best_match(gray, g)[0] >= 0.85 for g in gates)
+    if not on_pins and compass is not None and IDLE_SECONDS > 0 and not STATE["armed_at"] \
+            and time.time() - STATE["last_click"] > IDLE_SECONDS:
+        score, loc = best_match(gray, compass)
+        if score >= 0.85:  # inactif sur la carte du monde : on rouvre la carte des pins
+            return "boussole (reprise après inactivité)", int((loc[0] + compass.shape[1] / 2) / SCALE), int((loc[1] + compass.shape[0] / 2) / SCALE)
+    if on_pins:
         small = cv2.resize(img, None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_AREA)
         pin = find_pin(small)
         if pin:
@@ -202,10 +209,13 @@ def main():
     ap.add_argument("--serial", default=None, help="numéro de série si plusieurs appareils")
     ap.add_argument("--min-meat", type=int, default=20, help="viande minimum avant un pin (0 = pas de contrôle ; exige pytesseract)")
     ap.add_argument("--compass-delay", type=float, default=3.0, help="secondes d'attente avant la boussole")
+    ap.add_argument("--idle", type=float, default=30.0, help="secondes d'inactivité avant de rouvrir la carte des pins (0 = non)")
     ap.add_argument("--image", default=None, help="test à blanc sur une capture (aucun clic)")
     a = ap.parse_args()
     global COMPASS_DELAY
     COMPASS_DELAY = a.compass_delay
+    global IDLE_SECONDS
+    IDLE_SECONDS = a.idle
 
     templates = load_templates(a.templates)
     print(f"{len(templates)} image(s) chargée(s) : {[n for n, _ in templates]}")
@@ -241,6 +251,7 @@ def main():
                     desc, x, y = r
                     tap(a.adb, a.serial, x, y)
                     last_click = time.time()
+                    STATE["last_click"] = last_click
                     print(time.strftime("%H:%M:%S"), "clic", desc, (x, y))
             time.sleep(a.interval)
     except KeyboardInterrupt:

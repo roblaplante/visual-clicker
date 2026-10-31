@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var meatEdit: EditText
     private lateinit var compassEdit: EditText
     private lateinit var memEdit: EditText
+    private lateinit var idleEdit: EditText
 
     private val sp by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
     private val dir by lazy { File(filesDir, "templates").apply { mkdirs() } }
@@ -142,6 +143,13 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(memEdit)
 
+        root.addView(label("Inactif sur la carte du monde pendant (secondes) : rouvrir la carte des pins (0 = non)"))
+        idleEdit = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(sp.getInt("idleSec", 30).toString())
+        }
+        root.addView(idleEdit)
+
         root.addView(button("4. Démarrer") { start() })
         root.addView(button("Voir le journal des actions") { showLog() })
         root.addView(button("Effacer le journal") { File(filesDir, "journal.txt").delete() })
@@ -180,7 +188,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages sont gardés en mémoire à chaque sortie de l'écran et au démarrage. */
     private fun saveSettings() {
-        if (!::memEdit.isInitialized) return
+        if (!::idleEdit.isInitialized) return
         sp.edit()
             .putInt("threshold", 55 + thresholdBar.progress)
             .putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
@@ -188,6 +196,7 @@ class MainActivity : AppCompatActivity() {
             .putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
             .putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
             .putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
+            .putInt("idleSec", idleEdit.text.toString().toIntOrNull() ?: 30)
             .apply()
     }
 
