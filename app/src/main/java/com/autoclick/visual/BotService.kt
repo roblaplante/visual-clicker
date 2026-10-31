@@ -697,14 +697,42 @@ class BotService : Service() {
     private fun ocrDigits(src: Mat): String = ocrText(src).filter { it.isDigit() }
 
     /** Lit un texte blanc sur fond sombre (ML Kit) ; chaîne vide si illisible. */
-    private fun ocrText(src: Mat): String {
+    /** Ligne de texte reconnue : texte + centre vertical (en pixels de l'image source). */
+    private class OcrLine(val text: String, val cy: Double)
+
+    /** Texte ligne par ligne avec position. dark = texte sombre sur fond clair (fenêtres beiges du jeu). */
+    private fun ocrLines(src: Mat, dark: Boolean): List<OcrLine> {
         return try {
             val gray = Mat()
             Imgproc.cvtColor(src, gray, if (src.channels() == 4) Imgproc.COLOR_RGBA2GRAY else Imgproc.COLOR_RGB2GRAY)
             val big = Mat()
             Imgproc.resize(gray, big, Size(), 4.0, 4.0, Imgproc.INTER_CUBIC)
             val bin = Mat()
-            Imgproc.threshold(big, bin, 170.0, 255.0, Imgproc.THRESH_BINARY_INV) // texte blanc -> noir
+            Imgproc.threshold(big, bin, if (dark) 150.0 else 170.0, 255.0, if (dark) Imgproc.THRESH_BINARY else Imgproc.THRESH_BINARY_INV)
+            val padded = Mat()
+            Core.copyMakeBorder(bin, padded, 20, 20, 20, 20, Core.BORDER_CONSTANT, Scalar(255.0))
+            val bmp = Bitmap.createBitmap(padded.cols(), padded.rows(), Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(padded, bmp)
+            gray.release(); big.release(); bin.release(); padded.release()
+            val res = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 5, TimeUnit.SECONDS)
+            bmp.recycle()
+            res.textBlocks.flatMap { it.lines }.mapNotNull { l ->
+                l.boundingBox?.let { OcrLine(l.text, ((it.top + it.bottom) / 2.0 - 20) / 4.0) }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun ocrText(src: Mat, dark: Boolean = false): String {
+        return try {
+            val gray = Mat()
+            Imgproc.cvtColor(src, gray, if (src.channels() == 4) Imgproc.COLOR_RGBA2GRAY else Imgproc.COLOR_RGB2GRAY)
+            val big = Mat()
+            Imgproc.resize(gray, big, Size(), 4.0, 4.0, Imgproc.INTER_CUBIC)
+            val bin = Mat()
+            if (dark) Imgproc.threshold(big, bin, 150.0, 255.0, Imgproc.THRESH_BINARY) // texte sombre -> noir
+            else Imgproc.threshold(big, bin, 170.0, 255.0, Imgproc.THRESH_BINARY_INV) // texte blanc -> noir
             val padded = Mat()
             Core.copyMakeBorder(bin, padded, 20, 20, 20, 20, Core.BORDER_CONSTANT, Scalar(255.0))
             val bmp = Bitmap.createBitmap(padded.cols(), padded.rows(), Bitmap.Config.ARGB_8888)
@@ -929,6 +957,7 @@ class BotService : Service() {
         farmTarget["PIERRE"] = gi("Pierre", 1).coerceIn(0, 6)
         farmTarget["FER"] = gi("Fer", if (n == 6) 2 else 1).coerceIn(0, 6)
         farmCap = marchTotal
+        resetGrandCheck()
         buildPlan(null)
     }
 
@@ -937,14 +966,32 @@ class BotService : Service() {
     private var planAdjusted = false
     private var planTries = 0
 
+    // Vérification préalable du grand : Alliance > Territoire > Bâtiments Spéciaux
+    private var grandChecked = false
+    private var grandPresent = true // faux = aucun grand en place (on ne le cherche pas)
+    private var knownGrandType: String? = null
+    private var checkStartedAt = 0L
+    private var checkTries = 0
+    private var checkReads = 0
+    private var checkWaits = 0
+    private var checkBacks = 0
+    private var checkReturning = false
+
+    private fun resetGrandCheck() {
+        grandChecked = false; grandPresent = true; knownGrandType = null
+        checkStartedAt = 0L; checkTries = 0; checkReads = 0; checkWaits = 0; checkBacks = 0; checkReturning = false
+    }
+
     /** Plan de récolte = ce qu'on veut, moins ce que le panneau des marches montre déjà en cours. */
     private fun buildPlan(active: Map<String, Int>?) {
         farmTasks.clear()
         if (active == null) { grandRunning = false; grandType = null }
-        if (farmGrand && !grandRunning) farmTasks.add("GRAND")
+        if (farmGrand && grandPresent && !grandRunning) farmTasks.add("GRAND")
+        val gType = grandType ?: knownGrandType
         for (k in farmKinds) {
-            // Un grand déjà en cours couvre une récolte de son type : pas besoin d'une petite en plus.
-            val need = (farmTarget[k] ?: 0) - (active?.get(k) ?: 0) - (if (grandRunning && grandType == k) 1 else 0)
+            // Le grand (en cours, ou qu'on va lancer) couvre une récolte de son type : pas besoin d'une petite en plus.
+            val need = (farmTarget[k] ?: 0) - (active?.get(k) ?: 0) -
+                (if ((grandRunning || (farmGrand && grandPresent)) && gType == k) 1 else 0)
             repeat(need.coerceIn(0, 6)) { farmTasks.add(k) }
         }
         farmIdx = 0
@@ -953,7 +1000,7 @@ class BotService : Service() {
         searchedAt = 0L
         taskStartedAt = 0L
         farmFinished = false
-        if (!farmGrand || grandRunning) capPlan()
+        if (!farmGrand || !grandPresent || grandRunning) capPlan()
         log("farm : plan ${farmTasks.joinToString(", ")}" + if (active != null) " (déjà en cours : $active, grand en cours : $grandRunning)" else "")
     }
 
@@ -1087,6 +1134,7 @@ class BotService : Service() {
             log("farm : plus de marche libre, on arrête")
             return
         }
+        if (checkGrand(screen, rgb, now)) return
         if (!planAdjusted && farmIdx == 0) {
             if (farmMatch(screen, "loupe", 0.85) != null || farmMatch(screen, "rechercher", 0.8) != null) {
                 val active = readActive(screen)
@@ -1100,6 +1148,7 @@ class BotService : Service() {
                 } else if (planTries >= 6) {
                     farmCap = marchTotal
                     log("farm : panneau des marches introuvable, plan complet")
+                    buildPlan(null)
                     planAdjusted = true
                 }
                 return
@@ -1156,9 +1205,9 @@ class BotService : Service() {
         // 2b) fenêtre du grand avec « Rappeler » : notre escouade y collecte déjà. On passe (sans rappeler !).
         if (task == "GRAND" && farmMatch(screen, "rappeler", 0.8) != null) {
             grandRunning = true
-            val gt = grandType ?: readGrandDialogType(rgb)
+            val gt = grandType ?: knownGrandType ?: readGrandDialogType(rgb)
             log("farm : grand déjà en cours (bouton Rappeler, type ${gt ?: "inconnu"}) : on passe sans rappeler")
-            if (gt != null) applyGrandType(gt)
+            if (gt != null && grandType == null) applyGrandType(gt)
             nextFarmTask()
             return
         }
@@ -1255,6 +1304,109 @@ class BotService : Service() {
 
     /** Fait glisser la liste de [shift] px (positif = vers la droite) puis laisse le temps à l'animation. */
     /** Nom du bâtiment en haut de l'écran de l'escouade : Scierie = bois, Moulin = pain, Carrière = pierre, Mine = fer. */
+    private class GrandScan(val names: Int, val present: Boolean, val type: String?)
+
+    private fun isGrandName(t: String): Boolean {
+        val l = t.lowercase()
+        return ("grand" in l || "great" in l || "big" in l) && typeFromText(l) != null
+    }
+
+    /**
+     * Liste « Bâtiments Spéciaux » du Territoire d'Alliance : quatre grands (Moulin, Scierie, Carrière, Mine de Fer).
+     * Celui qui est en place affiche « Temps Restant » sous son nom ; les autres une phrase d'explication.
+     */
+    private fun scanGrandList(rgb: Mat): GrandScan {
+        val sc = rgb.cols() / 1080.0
+        val x0 = (290 * sc).toInt()
+        val x1 = minOf((1000 * sc).toInt(), rgb.cols())
+        val y0 = (300 * sc).toInt()
+        val y1 = minOf((2250 * sc).toInt(), rgb.rows())
+        if (x1 <= x0 || y1 <= y0) return GrandScan(0, false, null)
+        val lines = ocrLines(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), true)
+        val timeRx = Regex("\\d{1,2}:\\d{2}:\\d{2}")
+        val names = lines.filter { isGrandName(it.text) }
+        val times = lines.filter {
+            val t = it.text.lowercase()
+            ("restant" in t || "remaining" in t || timeRx.containsMatchIn(t)) && "recharg" !in t && "reload" !in t
+        }
+        for (n in names) {
+            if (times.any { it.cy - n.cy in 15 * sc..130 * sc }) return GrandScan(names.size, true, typeFromText(n.text))
+        }
+        if (lines.any { "restant" in it.text.lowercase() || "remaining" in it.text.lowercase() }) return GrandScan(names.size, true, null)
+        return GrandScan(names.size, false, null)
+    }
+
+    private fun clickRef(x: Double, y: Double, msg: String) {
+        lastClick = SystemClock.uptimeMillis()
+        ClickAccessibilityService.instance?.click((x * w / 1080.0).toFloat(), (y * w / 1080.0).toFloat())
+        log(msg)
+    }
+
+    /**
+     * Avant de planifier : carte > bouton Alliance > Territoire > onglet Bâtiments Spéciaux, on lit quel grand est
+     * en place (ou aucun), puis flèche retour jusqu'à la carte. Renvoie true tant que la vérification occupe l'écran.
+     */
+    private fun checkGrand(screen: Mat, rgb: Mat, now: Long): Boolean {
+        if (grandChecked || !farmGrand) return false
+        if (checkStartedAt == 0L) {
+            checkStartedAt = now
+            log("farm : vérification du grand (Alliance > Territoire > Bâtiments Spéciaux)")
+        }
+        val onMap = farmMatch(screen, "loupe", 0.85) != null
+        if (!checkReturning && now - checkStartedAt > 60_000) {
+            log("farm : vérification du grand trop longue, on la saute")
+            checkReturning = true
+        }
+        if (checkReturning) {
+            if (onMap) {
+                grandChecked = true
+                checkReturning = false
+                log("farm : retour sur la carte, vérification terminée")
+                return false
+            }
+            if (++checkBacks > 8) { grandChecked = true; log("farm : retour sur la carte introuvable, on continue"); return false }
+            lastClick = now
+            backArrow()
+            return true
+        }
+        if (onMap) {
+            if (++checkTries > 4) { checkReturning = true; log("farm : écran Alliance introuvable, on saute la vérification"); return true }
+            clickRef(803.0, 2240.0, "farm : clic Alliance (barre du bas)")
+            return true
+        }
+        val sc = rgb.cols() / 1080.0
+        val x0 = (130 * sc).toInt()
+        val x1 = minOf((760 * sc).toInt(), rgb.cols())
+        val y0 = (90 * sc).toInt()
+        val y1 = minOf((200 * sc).toInt(), rgb.rows())
+        val title = if (x1 > x0 && y1 > y0) ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))).lowercase() else ""
+        when {
+            "territ" in title -> {
+                val scan = scanGrandList(rgb)
+                if (scan.names >= 2 || scan.present) {
+                    if (!scan.present && ++checkReads < 2) return true // deuxième lecture pour confirmer « aucun grand »
+                    grandPresent = scan.present
+                    knownGrandType = scan.type
+                    log(if (scan.present) "farm : grand en place : ${scan.type ?: "type inconnu"}" else "farm : aucun grand en place, on ne le cherche pas")
+                    checkReturning = true
+                    lastClick = now
+                    backArrow()
+                    return true
+                }
+                if (++checkTries > 6) { checkReturning = true; log("farm : liste des grands illisible, on saute la vérification"); return true }
+                clickRef(765.0, 262.0, "farm : clic onglet Bâtiments Spéciaux")
+            }
+            "alliance" in title -> {
+                if (++checkTries > 6) { checkReturning = true; log("farm : bouton Territoire introuvable, on saute la vérification"); return true }
+                clickRef(285.0, 1300.0, "farm : clic Territoire")
+            }
+            else -> {
+                if (++checkWaits > 10) { checkReturning = true; log("farm : écran inattendu pendant la vérification du grand") }
+            }
+        }
+        return true
+    }
+
     private fun typeFromText(raw: String): String? {
         val t = raw.lowercase()
         return when {
@@ -1284,12 +1436,13 @@ class BotService : Service() {
         val y0 = (1560 * sc).toInt()
         val y1 = minOf((1700 * sc).toInt(), rgb.rows())
         if (x1 <= x0 || y1 <= y0) return null
-        return typeFromText(ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))))
+        return typeFromText(ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), true))
     }
 
     /** Le grand couvre une récolte de son type : on retire une petite de ce type du reste du plan. */
     private fun applyGrandType(type: String) {
         grandType = type
+        if (knownGrandType == type) { log("farm : le grand récolte du $type (déjà compté dans le plan)"); capPlan(); return }
         val idx = (farmIdx + 1 until farmTasks.size).firstOrNull { farmTasks[it] == type }
         if (idx != null) {
             farmTasks.removeAt(idx)
@@ -1638,7 +1791,7 @@ class BotService : Service() {
         if (running) {
             lastClick = SystemClock.uptimeMillis()
             if (mode == "farm") {
-                if (farmIdx >= farmTasks.size) { planAdjusted = false; planTries = 0; buildPlan(null) }
+                if (farmIdx >= farmTasks.size) { planAdjusted = false; planTries = 0; resetGrandCheck(); buildPlan(null) }
                 taskStartedAt = 0L
                 searchedAt = 0L
             }
