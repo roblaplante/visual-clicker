@@ -1220,7 +1220,9 @@ class BotService : Service() {
         // 3) fenêtre « Collecte » sur la carte : celle du grand porte aussi un bouton « Démanteler »
         val mc = farmMatch(screen, "collecte_dialog")
         if (mc != null) {
-            val grandDialog = farmMatch(screen, "demanteler", 0.8) != null
+            // Le grand : bouton « Démanteler » (chef d'alliance) ou, sinon, titre « Grand(e) … » lu à l'écran
+            val grandDialog = farmMatch(screen, "demanteler", 0.8) != null ||
+                readGrandDialogType(rgb) != null
             if ((task == "GRAND") == grandDialog) {
                 val (x, y) = farmCenter("collecte_dialog", mc)
                 searchedAt = 0L
@@ -1474,10 +1476,12 @@ class BotService : Service() {
         val sc = rgb.cols() / 1080.0
         val x0 = (240 * sc).toInt()
         val x1 = minOf((840 * sc).toInt(), rgb.cols())
-        val y0 = (1560 * sc).toInt()
+        val y0 = (1480 * sc).toInt()
         val y1 = minOf((1700 * sc).toInt(), rgb.rows())
         if (x1 <= x0 || y1 <= y0) return null
-        return typeFromText(ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), true))
+        val t = ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), true).lowercase()
+        // seul le titre d'un GRAND bâtiment compte (« [ygd]Grande Carrière ») : un petit gisement n'a pas « grand »
+        return if ("grand" in t || "great" in t) typeFromText(t) else null
     }
 
     /** Le grand couvre une récolte de son type : on retire une petite de ce type du reste du plan. */
