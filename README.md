@@ -60,3 +60,7 @@ Farm : loupe (carte du monde) > liste de tuiles > grand bâtiment d'alliance (s'
 selon le plan choisi (6 marches au maximum) > Rechercher > Collecte > (grand : escouade > Collecte) > Déployer.
 Grand déjà lancé (bouton Collecte gris) : flèche retour en haut à gauche, on passe à la suivante.
 Images du mode Farm : `app/src/main/assets/farm/` (exemples dans `exemples_images/farm/`).
+
+Farm : le plan est le nombre de récoltes VOULUES en même temps. Au démarrage, l'appli lit le panneau « Marche n/m »
+(en haut à gauche de la carte du monde, une icône de ressource par marche) et ne lance que ce qui manque.
+Le bouton ▶ est maintenant à droite de l'écran pour ne pas masquer ce panneau.

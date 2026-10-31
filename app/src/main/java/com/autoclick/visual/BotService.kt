@@ -662,7 +662,8 @@ class BotService : Service() {
     private fun loadFarm() {
         val names = listOf(
             "loupe", "tile_pain", "tile_bois", "tile_pierre", "tile_fer", "tile_terreur",
-            "rechercher", "collecte_dialog", "demanteler", "squad_collecte", "deployer_farm"
+            "rechercher", "collecte_dialog", "demanteler", "squad_collecte", "deployer_farm",
+            "panneau_entete", "panneau_pain", "panneau_bois", "panneau_pierre", "panneau_fer"
         )
         for (name in names) {
             try {
@@ -682,10 +683,26 @@ class BotService : Service() {
             }
         }
         val sp = getSharedPreferences("cfg", MODE_PRIVATE)
+        farmGrand = sp.getBoolean("farmGrand", true)
+        farmTarget["PAIN"] = sp.getInt("farmPain", 0).coerceIn(0, 6)
+        farmTarget["BOIS"] = sp.getInt("farmBois", 0).coerceIn(0, 6)
+        farmTarget["PIERRE"] = sp.getInt("farmPierre", 0).coerceIn(0, 6)
+        farmTarget["FER"] = sp.getInt("farmFer", 0).coerceIn(0, 6)
+        buildPlan(null)
+    }
+
+    private val farmTarget = HashMap<String, Int>()
+    private var farmGrand = true
+    private var planAdjusted = false
+    private var planTries = 0
+
+    /** Plan de récolte = ce qu'on veut, moins ce que le panneau des marches montre déjà en cours. */
+    private fun buildPlan(active: Map<String, Int>?) {
         farmTasks.clear()
-        if (sp.getBoolean("farmGrand", true)) farmTasks.add("GRAND")
-        for ((key, kind) in listOf("farmPain" to "PAIN", "farmBois" to "BOIS", "farmPierre" to "PIERRE", "farmFer" to "FER")) {
-            repeat(sp.getInt(key, 0).coerceIn(0, 6)) { farmTasks.add(kind) }
+        if (farmGrand) farmTasks.add("GRAND")
+        for (k in farmKinds) {
+            val need = (farmTarget[k] ?: 0) - (active?.get(k) ?: 0)
+            repeat(need.coerceIn(0, 6)) { farmTasks.add(k) }
         }
         while (farmTasks.size > 6) farmTasks.removeAt(farmTasks.size - 1)
         farmIdx = 0
@@ -693,7 +710,43 @@ class BotService : Service() {
         searchedAt = 0L
         taskStartedAt = 0L
         farmFinished = false
-        log("farm : plan ${farmTasks.joinToString(", ")}")
+        log("farm : plan ${farmTasks.joinToString(", ")}" + if (active != null) " (déjà en cours : $active)" else "")
+    }
+
+    /**
+     * Lit le panneau « Marche n/m » en haut à gauche de la carte du monde : une ligne par marche, avec
+     * l'icône de la ressource récoltée. Renvoie le nombre de récoltes en cours par type, ou null si le
+     * panneau n'est pas visible (déplié).
+     */
+    private fun readActive(screen: Mat): Map<String, Int>? {
+        val header = farmMatch(screen, "panneau_entete", 0.78) ?: return null
+        val ht = farm["panneau_entete"]!!
+        val s = w / 1080.0
+        val headerY = (header.maxLoc.y + ht.rows() / 2.0) / SCALE
+        val counts = HashMap<String, Int>()
+        for (i in 0 until 6) {
+            val cy = (headerY + (82 + i * 91) * s) * SCALE // centre de la ligne, en demi-résolution
+            val bx = (10 * s * SCALE).toInt()
+            val bw = (100 * s * SCALE).toInt()
+            val bh = (84 * s * SCALE).toInt()
+            val by = (cy - bh / 2).toInt()
+            if (by < 0 || by + bh > screen.rows() || bx + bw > screen.cols()) continue
+            val band = Mat(screen, Rect(bx, by, bw, bh))
+            var best = ""
+            var bs = 0.0
+            var second = 0.0
+            for (k in farmKinds) {
+                val t = farm["panneau_" + k.lowercase()] ?: continue
+                if (t.cols() > band.cols() || t.rows() > band.rows()) continue
+                val res = Mat()
+                Imgproc.matchTemplate(band, t, res, Imgproc.TM_CCOEFF_NORMED)
+                val v = Core.minMaxLoc(res).maxVal
+                res.release()
+                if (v > bs) { second = bs; bs = v; best = k } else if (v > second) { second = v }
+            }
+            if (bs >= 0.9 && bs - second >= 0.08) counts[best] = (counts[best] ?: 0) + 1
+        }
+        return counts
     }
 
     private fun farmMatch(screen: Mat, name: String, thr: Double = threshold): Core.MinMaxLocResult? {
@@ -732,6 +785,20 @@ class BotService : Service() {
     private fun detectFarm(screen: Mat, rgb: Mat) {
         val now = SystemClock.uptimeMillis()
         if (now - lastClick < cooldown) return
+        if (!planAdjusted && farmIdx == 0) {
+            if (farmMatch(screen, "loupe", 0.85) != null || farmMatch(screen, "rechercher", 0.8) != null) {
+                val active = readActive(screen)
+                planTries++
+                if (active != null) {
+                    buildPlan(active)
+                    planAdjusted = true
+                } else if (planTries >= 6) {
+                    log("farm : panneau des marches introuvable, plan complet")
+                    planAdjusted = true
+                }
+                return
+            }
+        }
         if (farmIdx >= farmTasks.size) {
             if (!farmFinished) {
                 farmFinished = true
@@ -899,8 +966,8 @@ class BotService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 0
-            y = 300
+            x = resources.displayMetrics.widthPixels - size // à droite : ne masque pas le panneau des marches
+            y = 900
         }
 
         var startX = 0
@@ -978,7 +1045,7 @@ class BotService : Service() {
         if (running) {
             lastClick = SystemClock.uptimeMillis()
             if (mode == "farm") {
-                if (farmIdx >= farmTasks.size) { farmIdx = 0; farmFinished = false; tileClickedIdx = -1 }
+                if (farmIdx >= farmTasks.size) { planAdjusted = false; planTries = 0; buildPlan(null) }
                 taskStartedAt = 0L
                 searchedAt = 0L
             }
