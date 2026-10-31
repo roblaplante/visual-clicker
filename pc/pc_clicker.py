@@ -98,7 +98,7 @@ def find_pin(small_bgr):
                    and ka >= 0.004 * w * w for kx, ky, ka in checks):
                 continue
             cx, cy = x + w / 2, y + 0.4 * h
-            if any(time.time() - t < PIN_MEMORY and abs(px - cx / SCALE) < 0.8 * w / SCALE and abs(py - cy / SCALE) < 0.8 * w / SCALE
+            if any(time.time() - t < PIN_MEMORY and abs(px - cx / SCALE) < 0.3 * w / SCALE and abs(py - cy / SCALE) < 0.3 * w / SCALE
                    for px, py, t in PINS_SEEN):
                 continue
             if best is None or cy < best[1]:

@@ -558,6 +558,7 @@ class BotService : Service() {
         var bestX = 0.0
         var bestY = Double.MAX_VALUE
         statCand = 0; statDone = 0; statSeen = 0
+        val visible = ArrayList<DoubleArray>()
         for ((lo, hi) in pinRanges) {
             val mask = Mat()
             Core.inRange(hsv, lo, hi, mask)
@@ -576,6 +577,7 @@ class BotService : Service() {
                 if (w < 0.085 * sw || w > 0.125 * sw || h < 0.11 * sw || h > 0.185 * sw) continue
                 if (h / w < 1.1 || h / w > 1.8 || a > 0.0105 * sw * sw) continue
                 statCand++
+                visible.add(doubleArrayOf((x + w / 2) / SCALE, (y + 0.4 * h) / SCALE))
                 val done = checks.any {
                     abs(it[0] - (x + 0.81 * w)) < 0.35 * w &&
                         abs(it[1] - (y + 0.23 * w)) < 0.35 * w &&
@@ -585,7 +587,7 @@ class BotService : Service() {
                 val fx = (x + w / 2) / SCALE
                 val fy = (y + 0.4 * h) / SCALE
                 val tnow = SystemClock.uptimeMillis()
-                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.8 * w / SCALE && abs(it.y - fy) < 0.8 * w / SCALE }) { statSeen++; continue }
+                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.3 * w / SCALE && abs(it.y - fy) < 0.3 * w / SCALE }) { statSeen++; continue }
                 val cy = y + 0.4 * h
                 if (cy < bestY) {
                     bestY = cy
@@ -595,6 +597,14 @@ class BotService : Service() {
             mask.release(); labels.release(); stats.release(); cents.release()
         }
         hsv.release(); k5.release(); k3.release()
+        // Un pin lancé qui a disparu (récolté) ne doit pas masquer un autre pin apparu près de lui.
+        if (visible.isNotEmpty()) {
+            val tn = SystemClock.uptimeMillis()
+            val tol = 0.03 * sw / SCALE
+            pinsSeen.removeAll { ps ->
+                tn - ps.t > 15_000 && visible.none { v -> abs(v[0] - ps.x) < tol && abs(v[1] - ps.y) < tol }
+            }
+        }
         if (bestY == Double.MAX_VALUE) return null
         return Pair((bestX / SCALE).toFloat(), (bestY / SCALE).toFloat())
     }
