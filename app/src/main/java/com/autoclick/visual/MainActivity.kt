@@ -35,7 +35,7 @@ import java.io.FileOutputStream
  */
 class MainActivity : AppCompatActivity() {
 
-    private var screen = 0 // 0 = menu, 1 = missions, 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages)
+    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?)
     private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
     private var huntN = 5 // idem pour le hunt
     private lateinit var huntCountEdit: EditText
@@ -97,6 +97,9 @@ class MainActivity : AppCompatActivity() {
                 } else if (screen == 5) {
                     saveSettings()
                     showHuntChoice()
+                } else if (screen == 1) {
+                    saveSettings()
+                    showIntelChoice()
                 } else if (screen != 0) {
                     saveSettings()
                     showMenu()
@@ -155,7 +158,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(TextView(this).apply { text = "Visual Clicker"; textSize = 26f })
         root.addView(label("Choisissez ce que l'application doit faire à votre place."))
 
-        root.addView(button("Missions de renseignements") { showIntel() })
+        root.addView(button("Missions de renseignements") { showIntelChoice() })
         root.addView(button("Farm") { showFarmChoice() })
         root.addView(button("Hunt (chasses de Terreur)") { showHuntChoice() })
 
@@ -226,11 +229,32 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Missions de renseignements ----------
 
+    /** Première question des missions : 5 ou 6 marches (les chasses à tête de loup en ont besoin). */
+    private fun showIntelChoice() {
+        screen = 6
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Missions de renseignements"; textSize = 22f })
+        root.addView(label("Combien de marches avez-vous ?"))
+        root.addView(button("5 marches") { sp.edit().putInt("marchTotal", 5).apply(); showIntel() })
+        root.addView(button("6 marches") { sp.edit().putInt("marchTotal", 6).apply(); showIntel() })
+        root.addView(
+            label(
+                "Avec 5 marches, les chasses à tête de loup sont ignorées quand elles sont toutes sorties ; " +
+                    "tentes et épées croisées restent faites. Dernier choix : ${sp.getInt("marchTotal", 5)} marches."
+            )
+        )
+    }
+
     private fun showIntel() {
         screen = 1
         val root = newRoot()
         root.addView(backToMenuButton())
-        root.addView(TextView(this).apply { text = "Missions de renseignements"; textSize = 22f })
+        root.addView(button("Changer le nombre de marches") {
+            saveSettings()
+            showIntelChoice()
+        })
+        root.addView(TextView(this).apply { text = "Missions de renseignements : ${sp.getInt("marchTotal", 5)} marches"; textSize = 22f })
 
         root.addView(button("(Facultatif) Ajouter une image à détecter en plus") { pickImage.launch("image/*") })
         countView = label("")
@@ -241,7 +265,7 @@ class MainActivity : AppCompatActivity() {
         })
         refreshCount()
 
-        addCommonSettings(root, true)
+        addCommonSettings(root, false)
 
         root.addView(label("Viande minimum avant d'attaquer un pin (0 = ne pas vérifier)"))
         meatEdit = numberField("minMeat", 20)
@@ -436,13 +460,12 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
-        if (screen == 0 || screen == 3 || screen == 4) return
+        if (screen == 0 || screen == 3 || screen == 4 || screen == 6) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
         e.putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
         if (screen == 1) {
-            e.putInt("marchTotal", (marchEdit.text.toString().toIntOrNull() ?: 5).coerceIn(1, 6))
             e.putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
             e.putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
             e.putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
