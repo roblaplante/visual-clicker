@@ -32,14 +32,20 @@ import android.view.WindowManager
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.ServiceCompat
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.Mat
+import org.opencv.core.Rect
 import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
@@ -69,6 +75,15 @@ class BotService : Service() {
     private var overlayParams: WindowManager.LayoutParams? = null
 
     private val templates = mutableListOf<Mat>()
+    private val templateNames = mutableListOf<String>()
+    private var compass: Mat? = null
+    private var lastMeat: Mat? = null
+    private var waitCompassUntil = 0L
+    private var minMeat = 20
+    // Décalage du clic (en px d'un écran de 1080 de large) par rapport au centre de l'image reconnue :
+    // sur « Victoire ! » on touche en dessous de la bannière (« Appuie n'importe où pour quitter »).
+    private val clickOffsets = mapOf("01_victoire.png" to doubleArrayOf(0.0, 1000.0))
+    private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private var lastGray: Mat? = null
     private var lastRgb: Mat? = null
     private val gates = mutableListOf<Mat>() // titre de l'écran des pins (FR / EN)
@@ -126,6 +141,7 @@ class BotService : Service() {
         setupDisplay()
         loadTemplates()
         loadGate()
+        loadCompass()
         addOverlay()
         handler.post(tick)
         return START_NOT_STICKY
@@ -138,9 +154,10 @@ class BotService : Service() {
         threshold = sp.getInt("threshold", 80) / 100.0
         interval = sp.getLong("interval", 500L).coerceAtLeast(100L)
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
+        minMeat = sp.getInt("minMeat", 20)
     }
 
-    private fun addTemplate(bmp: Bitmap, factor: Double) {
+    private fun addTemplate(bmp: Bitmap, factor: Double, name: String) {
         val rgba = Mat()
         Utils.bitmapToMat(bmp, rgba)
         bmp.recycle()
@@ -151,6 +168,7 @@ class BotService : Service() {
         Imgproc.resize(gray, small, Size(), factor, factor, Imgproc.INTER_AREA)
         gray.release()
         templates.add(small)
+        templateNames.add(name)
     }
 
     /** Images intégrées (boutons du jeu, prises sur un écran de 1080 px) puis images ajoutées par l'utilisateur. */
@@ -158,13 +176,13 @@ class BotService : Service() {
         try {
             assets.list("templates")?.sorted()?.forEach { name ->
                 val bmp = assets.open("templates/$name").use { BitmapFactory.decodeStream(it) } ?: return@forEach
-                addTemplate(bmp, SCALE * w / 1080.0)
+                addTemplate(bmp, SCALE * w / 1080.0, name)
             }
         } catch (_: Exception) {
         }
         File(filesDir, "templates").listFiles()?.sortedBy { it.name }?.forEach { f ->
             val bmp = BitmapFactory.decodeFile(f.absolutePath) ?: return@forEach
-            addTemplate(bmp, SCALE)
+            addTemplate(bmp, SCALE, "user_" + f.name)
         }
     }
 
@@ -190,6 +208,25 @@ class BotService : Service() {
                 gates.add(small)
             } catch (_: Exception) {
             }
+        }
+    }
+
+    /** Bouton boussole de la carte du monde (retour à « Mission de renseignements »), pris sur 1080 px. */
+    private fun loadCompass() {
+        try {
+            val bmp = assets.open("boussole.png").use { BitmapFactory.decodeStream(it) } ?: return
+            val rgba = Mat()
+            Utils.bitmapToMat(bmp, rgba)
+            bmp.recycle()
+            val gray = Mat()
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            rgba.release()
+            val f = SCALE * w / 1080.0
+            val small = Mat()
+            Imgproc.resize(gray, small, Size(), f, f, Imgproc.INTER_AREA)
+            gray.release()
+            compass = small
+        } catch (_: Exception) {
         }
     }
 
@@ -236,6 +273,8 @@ class BotService : Service() {
         lastGray = null
         lastRgb?.release()
         lastRgb = null
+        lastMeat?.release()
+        lastMeat = null
     }
 
     private fun onFrame(rd: ImageReader) {
@@ -246,17 +285,19 @@ class BotService : Service() {
             lastProcess = now
             lastGray?.release()
             lastRgb?.release()
-            val (gray, rgb) = capture(img)
+            lastMeat?.release()
+            val (gray, rgb, meat) = capture(img)
             lastGray = gray
             lastRgb = rgb
-            detectAndClick(gray, rgb)
+            lastMeat = meat
+            detectAndClick(gray, rgb, meat)
         } finally {
             img.close()
         }
     }
 
     /** Renvoie (niveaux de gris, RGB) en demi-résolution. */
-    private fun capture(img: Image): Pair<Mat, Mat> {
+    private fun capture(img: Image): Triple<Mat, Mat, Mat> {
         val p = img.planes[0]
         val bmpW = p.rowStride / p.pixelStride
         val bmp = Bitmap.createBitmap(bmpW, img.height, Bitmap.Config.ARGB_8888)
@@ -264,6 +305,12 @@ class BotService : Service() {
         val rgba = Mat()
         Utils.bitmapToMat(bmp, rgba)
         bmp.recycle()
+        // Compteur de viande (en haut à droite), pris en pleine résolution pour la lecture du nombre.
+        val mx0 = (0.828 * img.width).toInt()
+        val mx1 = (0.935 * img.width).toInt()
+        val my0 = (0.105 * img.width).toInt()
+        val my1 = minOf((0.158 * img.width).toInt(), img.height)
+        val meat = Mat(rgba, Rect(mx0, my0, mx1 - mx0, my1 - my0)).clone()
         val cropped = rgba.submat(0, img.height, 0, img.width)
         val smallRgba = Mat()
         Imgproc.resize(cropped, smallRgba, Size(), SCALE, SCALE, Imgproc.INTER_AREA)
@@ -274,7 +321,7 @@ class BotService : Service() {
         val rgb = Mat()
         Imgproc.cvtColor(smallRgba, rgb, Imgproc.COLOR_RGBA2RGB)
         smallRgba.release()
-        return Pair(gray, rgb)
+        return Triple(gray, rgb, meat)
     }
 
     // ---------- Détection & clic ----------
@@ -288,9 +335,10 @@ class BotService : Service() {
                 if (running && now - lastProcess >= interval) {
                     val g = lastGray
                     val c = lastRgb
-                    if (g != null && c != null) {
+                    val m = lastMeat
+                    if (g != null && c != null && m != null) {
                         lastProcess = now
-                        detectAndClick(g, c)
+                        detectAndClick(g, c, m)
                     }
                 }
             } catch (_: Exception) {
@@ -299,41 +347,104 @@ class BotService : Service() {
         }
     }
 
-    private fun detectAndClick(screen: Mat, rgb: Mat) {
+    private fun matchBest(screen: Mat, t: Mat): Core.MinMaxLocResult? {
+        if (t.cols() > screen.cols() || t.rows() > screen.rows()) return null
+        val res = Mat()
+        Imgproc.matchTemplate(screen, t, res, Imgproc.TM_CCOEFF_NORMED)
+        val mm = Core.minMaxLoc(res)
+        res.release()
+        return mm
+    }
+
+    private fun detectAndClick(screen: Mat, rgb: Mat, meat: Mat) {
         val now = SystemClock.uptimeMillis()
         if (now - lastClick < cooldown) return
-        // 1) boutons / images fournis par l'utilisateur
-        for (t in templates) {
-            if (t.cols() > screen.cols() || t.rows() > screen.rows()) continue
-            val res = Mat()
-            Imgproc.matchTemplate(screen, t, res, Imgproc.TM_CCOEFF_NORMED)
-            val mm = Core.minMaxLoc(res)
-            res.release()
+        // 1) boutons du jeu (intégrés) et images ajoutées par l'utilisateur
+        for ((i, t) in templates.withIndex()) {
+            val mm = matchBest(screen, t) ?: continue
             if (mm.maxVal >= threshold) {
-                val cx = ((mm.maxLoc.x + t.cols() / 2.0) / SCALE).toFloat()
-                val cy = ((mm.maxLoc.y + t.rows() / 2.0) / SCALE).toFloat()
+                var cx = ((mm.maxLoc.x + t.cols() / 2.0) / SCALE).toFloat()
+                var cy = ((mm.maxLoc.y + t.rows() / 2.0) / SCALE).toFloat()
+                val off = clickOffsets[templateNames[i]]
+                if (off != null) {
+                    cx += (off[0] * w / 1080.0).toFloat()
+                    cy += (off[1] * w / 1080.0).toFloat()
+                }
+                if (templateNames[i] == "01_victoire.png") waitCompassUntil = now + 30_000
                 lastClick = now
                 ClickAccessibilityService.instance?.click(cx, cy)
                 toast("Clic (%.2f)".format(mm.maxVal))
                 return
             }
         }
-        // 2) écran « Mission de renseignements » : pins reconnus par leur couleur
+        // 2) après une victoire : boussole de la carte du monde pour revenir aux pins
+        if (waitCompassUntil > now) {
+            val c = compass
+            val mm = if (c != null) matchBest(screen, c) else null
+            if (c != null && mm != null && mm.maxVal >= threshold) {
+                val cx = ((mm.maxLoc.x + c.cols() / 2.0) / SCALE).toFloat()
+                val cy = ((mm.maxLoc.y + c.rows() / 2.0) / SCALE).toFloat()
+                waitCompassUntil = 0L
+                lastClick = now
+                ClickAccessibilityService.instance?.click(cx, cy)
+                toast("Retour à la carte des pins")
+                return
+            }
+        } else {
+            waitCompassUntil = 0L
+        }
+        // 3) écran des pins (« Mission de renseignements » / « Intel Mission »)
         if (gates.isEmpty()) return
         var onPinScreen = false
         for (g in gates) {
-            if (g.cols() > screen.cols() || g.rows() > screen.rows()) continue
-            val res = Mat()
-            Imgproc.matchTemplate(screen, g, res, Imgproc.TM_CCOEFF_NORMED)
-            val score = Core.minMaxLoc(res).maxVal
-            res.release()
-            if (score >= 0.85) { onPinScreen = true; break }
+            val mm = matchBest(screen, g) ?: continue
+            if (mm.maxVal >= 0.85) { onPinScreen = true; break }
         }
         if (!onPinScreen) return
         val pin = findPin(rgb) ?: return
+        if (!enoughMeat(meat)) return
         lastClick = now
         ClickAccessibilityService.instance?.click(pin.first, pin.second)
         toast("Clic sur un pin")
+    }
+
+    /** Lit le compteur de viande ; pause le bot s'il est sous le minimum. Illisible = on continue. */
+    private fun enoughMeat(meat: Mat): Boolean {
+        if (minMeat <= 0) return true
+        val v = readMeat(meat) ?: return true
+        if (v >= minMeat) return true
+        main.post { pauseBot("Plus assez de viande ($v < $minMeat) : pause") }
+        return false
+    }
+
+    private fun readMeat(meat: Mat): Int? {
+        return try {
+            val gray = Mat()
+            Imgproc.cvtColor(meat, gray, Imgproc.COLOR_RGBA2GRAY)
+            val big = Mat()
+            Imgproc.resize(gray, big, Size(), 4.0, 4.0, Imgproc.INTER_CUBIC)
+            val bin = Mat()
+            Imgproc.threshold(big, bin, 170.0, 255.0, Imgproc.THRESH_BINARY_INV) // texte blanc -> noir
+            val padded = Mat()
+            Core.copyMakeBorder(bin, padded, 20, 20, 20, 20, Core.BORDER_CONSTANT, Scalar(255.0))
+            val bmp = Bitmap.createBitmap(padded.cols(), padded.rows(), Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(padded, bmp)
+            gray.release(); big.release(); bin.release(); padded.release()
+            val text = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 5, TimeUnit.SECONDS).text
+            bmp.recycle()
+            Regex("\\d+").findAll(text).map { it.value }.maxByOrNull { it.length }?.toIntOrNull()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun pauseBot(msg: String) {
+        running = false
+        overlay?.let {
+            it.text = "▶"
+            (it.background as GradientDrawable).setColor(0xCC2E7D32.toInt())
+        }
+        toast(msg)
     }
 
     // Plages HSV (OpenCV : H 0-179) des pins : bleu, mauve, or.
@@ -513,6 +624,8 @@ class BotService : Service() {
         lastGray?.release()
         lastRgb?.release()
         gates.forEach { it.release() }
+        compass?.release()
+        lastMeat?.release()
         gates.clear()
         super.onDestroy()
     }

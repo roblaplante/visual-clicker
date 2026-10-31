@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var thresholdBar: SeekBar
     private lateinit var intervalEdit: EditText
     private lateinit var cooldownEdit: EditText
+    private lateinit var meatEdit: EditText
 
     private val sp by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
     private val dir by lazy { File(filesDir, "templates").apply { mkdirs() } }
@@ -118,6 +119,13 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(cooldownEdit)
 
+        root.addView(label("Viande minimum avant d'attaquer un pin (0 = ne pas vérifier)"))
+        meatEdit = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(sp.getInt("minMeat", 20).toString())
+        }
+        root.addView(meatEdit)
+
         root.addView(button("4. Démarrer") { start() })
         root.addView(
             label(
@@ -165,6 +173,7 @@ class MainActivity : AppCompatActivity() {
             .putInt("threshold", 55 + thresholdBar.progress)
             .putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
             .putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
+            .putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
             .apply()
         val mpm = getSystemService(MediaProjectionManager::class.java)
         capture.launch(mpm.createScreenCaptureIntent())

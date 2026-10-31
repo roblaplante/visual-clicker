@@ -35,3 +35,9 @@ Les 6 boutons du jeu (Victoire, Combattre, Déployer, Attaquer, Conquérir, Voir
 (`app/src/main/assets/templates/`) : rien à importer. Seuil conseillé : 85 %.
 Les pins déjà faits (coche verte) sont ignorés. Exemples : `exemples_images/pin_tente_bleu.png`,
 `exemples_images/carte_pins_coches.png`.
+
+## Enchaînement complet
+pin (sans coche verte, si viande >= minimum) > Voir > Attaquer / Conquérir > Déployer / Combattre >
+Victoire (touche sous la bannière) > boussole de la carte du monde (seulement juste après une victoire)
+> retour à « Mission de renseignements » > pin suivant.
+La viande est lue en haut à droite de l'écran des pins ; sous le minimum réglé (20 par défaut), l'appli se met en pause.

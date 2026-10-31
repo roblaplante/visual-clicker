@@ -30,6 +30,8 @@ PIN_RANGES = [
     ((8, 80, 140), (28, 255, 255)),
 ]
 # Titre de l'écran des pins -> largeur d'écran sur laquelle l'image a été prise
+# Décalage de clic (px, écran 1080 de large) : on touche sous la bannière « Victoire ! »
+CLICK_OFFSETS = {"01_victoire.png": (0, 1000)}
 GATES = {"titre_mission_fr.png": 1080.0, "titre_mission_en.png": 540.0}
 
 
@@ -99,21 +101,63 @@ def find_pin(small_bgr):
     return int(best[0] / SCALE), int(best[1] / SCALE)
 
 
-def detect(img, templates, gates, threshold):
-    """Renvoie (description, x, y) du clic à faire, ou None."""
+def read_meat(img):
+    """Lit le compteur de viande (en haut à droite) avec pytesseract ; None si illisible."""
+    try:
+        import pytesseract
+        W = img.shape[1]
+        c = img[int(0.105 * W):int(0.158 * W), int(0.828 * W):int(0.935 * W)]
+        g = cv2.resize(cv2.cvtColor(c, cv2.COLOR_BGR2GRAY), None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+        _, b = cv2.threshold(g, 170, 255, cv2.THRESH_BINARY_INV)
+        b = cv2.copyMakeBorder(b, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+        t = pytesseract.image_to_string(b, config="--psm 7 -c tessedit_char_whitelist=0123456789").strip()
+        return int(t) if t.isdigit() else None
+    except Exception:
+        return None
+
+
+STATE = {"compass_until": 0.0}
+
+
+def detect(img, templates, gates, threshold, compass=None, min_meat=0):
+    """Renvoie (description, x, y) du clic à faire, ou None.
+    Ordre : boutons du jeu > boussole (seulement après une victoire) > pin (si assez de viande)."""
     gray = to_gray_small(img)
+    sw = img.shape[1]
     for name, tpl in templates:
         score, loc = best_match(gray, tpl)
         if score >= threshold:
             x = int((loc[0] + tpl.shape[1] / 2) / SCALE)
             y = int((loc[1] + tpl.shape[0] / 2) / SCALE)
+            if name in CLICK_OFFSETS:
+                x += int(CLICK_OFFSETS[name][0] * sw / 1080)
+                y += int(CLICK_OFFSETS[name][1] * sw / 1080)
+                STATE["compass_until"] = time.time() + 30
             return f"{name} ({score:.2f})", x, y
+    if compass is not None and time.time() < STATE["compass_until"]:
+        score, loc = best_match(gray, compass)
+        if score >= threshold:
+            STATE["compass_until"] = 0.0
+            return "boussole (retour carte des pins)", int((loc[0] + compass.shape[1] / 2) / SCALE), int((loc[1] + compass.shape[0] / 2) / SCALE)
     if any(best_match(gray, g)[0] >= 0.85 for g in gates):
         small = cv2.resize(img, None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_AREA)
         pin = find_pin(small)
         if pin:
+            if min_meat > 0:
+                meat = read_meat(img)
+                if meat is not None and meat < min_meat:
+                    return f"STOP viande insuffisante ({meat} < {min_meat})", -1, -1
             return "pin", pin[0], pin[1]
     return None
+
+
+def load_compass(folder, screen_w):
+    img = cv2.imread(os.path.join(folder, "boussole.png"))
+    if img is None:
+        return None
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    f = SCALE * screen_w / 1080.0
+    return cv2.resize(g, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
 
 
 def adb_cmd(adb, serial):
@@ -139,6 +183,7 @@ def main():
     ap.add_argument("--cooldown", type=float, default=1.0, help="secondes entre deux clics")
     ap.add_argument("--adb", default="adb")
     ap.add_argument("--serial", default=None, help="numéro de série si plusieurs appareils")
+    ap.add_argument("--min-meat", type=int, default=20, help="viande minimum avant un pin (0 = pas de contrôle ; exige pytesseract)")
     ap.add_argument("--image", default=None, help="test à blanc sur une capture (aucun clic)")
     a = ap.parse_args()
 
@@ -147,12 +192,15 @@ def main():
 
     if a.image:
         img = cv2.imread(a.image)
-        r = detect(img, templates, load_gates(a.gates, img.shape[1]), a.threshold)
+        STATE["compass_until"] = time.time() + 30  # test : on suppose qu'on sort d'une victoire
+        r = detect(img, templates, load_gates(a.gates, img.shape[1]), a.threshold,
+                   load_compass(a.gates, img.shape[1]), a.min_meat)
         print("Cliquerait :", r if r else "rien")
         return
 
     last_click = 0.0
     gates = None
+    compass = None
     print("En marche. Ctrl+C pour arrêter.")
     try:
         while True:
@@ -163,8 +211,12 @@ def main():
                 continue
             if gates is None:
                 gates = load_gates(a.gates, img.shape[1])
+                compass = load_compass(a.gates, img.shape[1])
             if time.time() - last_click >= a.cooldown:
-                r = detect(img, templates, gates, a.threshold)
+                r = detect(img, templates, gates, a.threshold, compass, a.min_meat)
+                if r and r[1] < 0:
+                    print(r[0], "- arrêt.")
+                    return
                 if r:
                     desc, x, y = r
                     tap(a.adb, a.serial, x, y)
