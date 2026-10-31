@@ -828,6 +828,17 @@ class BotService : Service() {
             }
         }
         if (n == 0) {
+            // Aucune tuile de ressource visible mais « Terreur » oui : le grand est juste à sa droite,
+            // donc Pain est deux cases plus loin (le grand est toujours à droite de Terreur).
+            val mt0 = farmMatch(screen, "tile_terreur", 0.8)
+            if (mt0 != null) {
+                val t0 = farm["tile_terreur"]!!
+                sumX = (mt0.maxLoc.x + t0.cols() / 2.0) / SCALE + 2 * pitch
+                sumY = (mt0.maxLoc.y + t0.rows() / 2.0) / SCALE
+                n = 1
+            }
+        }
+        if (n == 0) {
             // Position de la liste inconnue : on la ramène vers le début.
             swipeRow(0.76 * h, 0.5 * w, now)
             log("farm : aucune tuile reconnue, retour au début de la liste")
