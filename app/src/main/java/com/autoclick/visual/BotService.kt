@@ -90,7 +90,8 @@ class BotService : Service() {
     private var hexTpl: Mat? = null // pin hexagonal du boss (tête de roi) : à ne jamais attaquer
     private var noMarchUntil = 0L
     private var farmBackPending = false
-    private var farmCap = 6 // récoltes que l'on peut encore lancer = marches libres
+    private var farmCap = 6 // marches libres au moment du plan
+    private var farmLaunched = 0 // récoltes réellement envoyées (Déployer)
     private var lastPanel: Mat? = null // bande du panneau des marches, pleine résolution (mode farm)
     private var panelY0 = 0
     private var grandRunning = false
@@ -926,12 +927,13 @@ class BotService : Service() {
             val need = (farmTarget[k] ?: 0) - (active?.get(k) ?: 0) - (if (grandRunning && grandType == k) 1 else 0)
             repeat(need.coerceIn(0, 6)) { farmTasks.add(k) }
         }
-        if (!farmGrand || grandRunning) capPlan()
         farmIdx = 0
+        farmLaunched = 0
         tileClickedIdx = -1
         searchedAt = 0L
         taskStartedAt = 0L
         farmFinished = false
+        if (!farmGrand || grandRunning) capPlan()
         log("farm : plan ${farmTasks.joinToString(", ")}" + if (active != null) " (déjà en cours : $active, grand en cours : $grandRunning)" else "")
     }
 
@@ -960,6 +962,14 @@ class BotService : Service() {
         val counts = HashMap<String, Int>()
         grandRunning = false
         grandType = null
+        val panelHsv: Mat? = lastPanel?.let { pm ->
+            val c3 = Mat()
+            Imgproc.cvtColor(pm, c3, Imgproc.COLOR_RGBA2RGB)
+            val hv = Mat()
+            Imgproc.cvtColor(c3, hv, Imgproc.COLOR_RGB2HSV)
+            c3.release()
+            hv
+        }
         for (i in 0 until 6) {
             val cy = (headerY + (82 + i * 91) * s) * SCALE // centre de la ligne, en demi-résolution
             val bx = (10 * s * SCALE).toInt()
@@ -981,17 +991,22 @@ class BotService : Service() {
                 if (v > bs) { second = bs; bs = v; best = k } else if (v > second) { second = v }
             }
             val classified = bs >= 0.9 && bs - second >= 0.08
+            // L'icône du grand porte une petite pastille blanche en bas à droite (même sous 7 h de collecte).
+            val rowLocalY = headerY + (82 + i * 91) * s - panelY0
+            val badge = panelHsv != null &&
+                fraction(panelHsv, 66 * s, rowLocalY + 4 * s, 24 * s, 22 * s, Scalar(0.0, 0.0, 200.0), Scalar(179.0, 45.0, 255.0)) >= 0.04
             // Durée de collecte restante : plus de 7 h = c'est le grand bâtiment (son icône porte un petit
             // badge d'alliance, donc elle n'est pas toujours reconnue) ; sinon c'est une petite récolte.
             val secs = readRowSeconds(headerY + (82 + i * 91) * s, s)
-            if (secs != null && secs > 7 * 3600) {
+            if (badge || (secs != null && secs > 7 * 3600)) {
                 grandRunning = true
                 if (bs >= 0.65 && bs - second >= 0.12) grandType = best // l'icône du grand porte un badge : reconnaissance plus souple
-                log("farm : ligne ${i + 1} : ${secs / 3600}h${(secs % 3600) / 60}min restantes, c'est le grand ($grandType)")
+                log("farm : ligne ${i + 1} : c'est le grand (${if (badge) "pastille d'alliance" else "plus de 7 h"}, $grandType)")
             } else if (classified) {
                 counts[best] = (counts[best] ?: 0) + 1
             }
         }
+        panelHsv?.release()
         return counts
     }
 
@@ -1017,16 +1032,17 @@ class BotService : Service() {
 
     /** 6 marches au maximum (le grand compte pour une récolte de son type : on plafonne après l'avoir su). */
     private fun capPlan() {
-        while (farmTasks.size > farmCap) farmTasks.removeAt(farmTasks.size - 1)
+        val pending = (farmCap - farmLaunched).coerceAtLeast(0) // marches encore libres
+        while (farmTasks.size - farmIdx > pending) farmTasks.removeAt(farmTasks.size - 1)
     }
 
     private fun nextFarmTask() {
-        capPlan()
         log("farm : tâche ${farmIdx + 1}/${farmTasks.size} terminée")
         farmIdx++
         tileClickedIdx = -1
         searchedAt = 0L
         taskStartedAt = 0L
+        capPlan()
     }
 
     /**
@@ -1090,6 +1106,7 @@ class BotService : Service() {
         if (md != null) {
             val (x, y) = farmCenter("deployer_farm", md)
             farmClick(x, y, "farm : clic Déployer (%.2f) pour $task".format(md.maxVal))
+            farmLaunched++
             nextFarmTask()
             return
         }

@@ -81,3 +81,7 @@ Marches : réglage « Nombre total de marches » (5 ou 6). Le nombre de marches 
 (ligne = rond turquoise ou bouton cyan). Missions de renseignements : si toutes les marches sont prises, une chasse à tête
 de loup (bouton « Attaquer ») est ignorée avec retour aux pins, mais les tentes (Secourir) et épées croisées (Combattre)
 continuent. Farm : on ne lance pas plus de récoltes que de marches libres.
+
+Grand repéré par sa pastille blanche (en bas à droite de son icône dans le panneau des marches), même quand son temps
+restant est sous 7 h. Plafond de récoltes = marches libres moins les récoltes réellement envoyées : un grand sauté
+(déjà en cours, bouton Rappeler ou indisponible) ne consomme pas de marche.
