@@ -33,7 +33,9 @@ PIN_RANGES = [
 # Décalage de clic (px, écran 1080 de large) : on touche sous la bannière « Victoire ! »
 CLICK_OFFSETS = {"01_victoire.png": (0, 1000)}
 # Après ces boutons : retour à la carte des pins par la boussole (fin de combat / secours de la tente)
-COMPASS_AFTER = {"01_victoire.png", "07_secourir.png"}
+COMPASS_AFTER = {"01_victoire.png", "03_deployer.png", "07_secourir.png"}
+PINS_SEEN = []  # (x, y, instant) des pins déjà lancés
+PIN_MEMORY = 20 * 60.0
 GATES = {"titre_mission_fr.png": 1080.0, "titre_mission_en.png": 540.0}
 
 
@@ -96,6 +98,9 @@ def find_pin(small_bgr):
                    and ka >= 0.004 * w * w for kx, ky, ka in checks):
                 continue
             cx, cy = x + w / 2, y + 0.4 * h
+            if any(time.time() - t < PIN_MEMORY and abs(px - cx / SCALE) < 0.8 * w / SCALE and abs(py - cy / SCALE) < 0.8 * w / SCALE
+                   for px, py, t in PINS_SEEN):
+                continue
             if best is None or cy < best[1]:
                 best = (cx, cy)
     if best is None:
@@ -158,6 +163,7 @@ def detect(img, templates, gates, threshold, compass=None, min_meat=0):
                 meat = read_meat(img)
                 if meat is not None and meat < min_meat:
                     return f"STOP viande insuffisante ({meat} < {min_meat})", -1, -1
+            PINS_SEEN.append((pin[0], pin[1], time.time()))
             return "pin", pin[0], pin[1]
     return None
 

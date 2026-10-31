@@ -81,10 +81,13 @@ class BotService : Service() {
     private var compassArmedAt = 0L // instant du dernier « Victoire » / « Secourir » (0 = rien à attendre)
     private var compassDelayMs = 3000L
     private var minMeat = 20
+    private var pinMemoryMs = 20 * 60_000L
+    private class PinSeen(val x: Double, val y: Double, val t: Long)
+    private val pinsSeen = mutableListOf<PinSeen>() // pins déjà lancés : on ne les reclique pas tout de suite
     // Décalage du clic (en px d'un écran de 1080 de large) par rapport au centre de l'image reconnue :
     // sur « Victoire ! » on touche en dessous de la bannière (« Appuie n'importe où pour quitter »).
-    // Boutons après lesquels on revient à la carte des pins par la boussole : fin d'un combat ou secours (tente).
-    private val compassAfter = setOf("01_victoire.png", "07_secourir.png")
+    // Boutons après lesquels on revient à la carte des pins par la boussole : troupes parties (ours), victoire, secours (tente).
+    private val compassAfter = setOf("01_victoire.png", "03_deployer.png", "07_secourir.png")
     private val clickOffsets = mapOf("01_victoire.png" to doubleArrayOf(0.0, 1000.0))
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private var lastGray: Mat? = null
@@ -159,6 +162,7 @@ class BotService : Service() {
         interval = sp.getLong("interval", 500L).coerceAtLeast(100L)
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
         minMeat = sp.getInt("minMeat", 20)
+        pinMemoryMs = sp.getInt("pinMemory", 20).coerceIn(0, 600) * 60_000L
         compassDelayMs = sp.getInt("compassDelay", 3).coerceIn(0, 60) * 1000L
     }
 
@@ -386,10 +390,14 @@ class BotService : Service() {
                 return
             }
         }
-        // 2) après une victoire ou un secours : boussole de la carte du monde pour revenir aux pins
+        val onPinScreen = gates.any { g -> (matchBest(screen, g)?.maxVal ?: 0.0) >= 0.85 }
+        // 2) après un départ de troupes, une victoire ou un secours : boussole pour revenir aux pins
         if (compassArmedAt > 0L) {
             val since = now - compassArmedAt
-            if (since > compassDelayMs + 20_000) {
+            if (onPinScreen) {
+                log("déjà sur la carte des pins : boussole inutile")
+                compassArmedAt = 0L
+            } else if (since > compassDelayMs + 20_000) {
                 log("boussole abandonnée (introuvable pendant ${(since / 1000)} s)")
                 compassArmedAt = 0L
             } else if (since >= compassDelayMs) {
@@ -420,16 +428,12 @@ class BotService : Service() {
             }
         }
         // 3) écran des pins (« Mission de renseignements » / « Intel Mission »)
-        if (gates.isEmpty()) return
-        var onPinScreen = false
-        for (g in gates) {
-            val mm = matchBest(screen, g) ?: continue
-            if (mm.maxVal >= 0.85) { onPinScreen = true; break }
-        }
         if (!onPinScreen) return
         val pin = findPin(rgb) ?: return
         if (!enoughMeat(meat)) return
         lastClick = now
+        pinsSeen.removeAll { now - it.t > pinMemoryMs }
+        pinsSeen.add(PinSeen(pin.first.toDouble(), pin.second.toDouble(), now))
         ClickAccessibilityService.instance?.click(pin.first, pin.second)
         log("clic pin en (%d, %d)".format(pin.first.toInt(), pin.second.toInt()))
         toast("Clic sur un pin")
@@ -547,6 +551,10 @@ class BotService : Service() {
                         it[2] >= 0.004 * w * w
                 }
                 if (done) continue
+                val fx = (x + w / 2) / SCALE
+                val fy = (y + 0.4 * h) / SCALE
+                val tnow = SystemClock.uptimeMillis()
+                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.8 * w / SCALE && abs(it.y - fy) < 0.8 * w / SCALE }) continue
                 val cy = y + 0.4 * h
                 if (cy < bestY) {
                     bestY = cy

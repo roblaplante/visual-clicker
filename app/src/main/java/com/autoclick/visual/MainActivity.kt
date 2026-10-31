@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cooldownEdit: EditText
     private lateinit var meatEdit: EditText
     private lateinit var compassEdit: EditText
+    private lateinit var memEdit: EditText
 
     private val sp by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
     private val dir by lazy { File(filesDir, "templates").apply { mkdirs() } }
@@ -134,6 +135,13 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(compassEdit)
 
+        root.addView(label("Un pin déjà lancé n'est pas recliqué pendant (minutes)"))
+        memEdit = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(sp.getInt("pinMemory", 20).toString())
+        }
+        root.addView(memEdit)
+
         root.addView(button("4. Démarrer") { start() })
         root.addView(button("Voir le journal des actions") { showLog() })
         root.addView(button("Effacer le journal") { File(filesDir, "journal.txt").delete() })
@@ -172,13 +180,14 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages sont gardés en mémoire à chaque sortie de l'écran et au démarrage. */
     private fun saveSettings() {
-        if (!::compassEdit.isInitialized) return
+        if (!::memEdit.isInitialized) return
         sp.edit()
             .putInt("threshold", 55 + thresholdBar.progress)
             .putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
             .putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
             .putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
             .putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
+            .putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
             .apply()
     }
 

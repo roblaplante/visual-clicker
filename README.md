@@ -43,3 +43,6 @@ Victoire (touche sous la bannière) > boussole de la carte du monde (seulement j
 La viande est lue en haut à droite de l'écran des pins ; sous le minimum réglé (20 par défaut), l'appli se met en pause.
 
 Tente : pin > Voir > Secourir > (on reste sur la carte du monde) > boussole > carte des pins.
+
+Ours : après « Déployer » (troupes parties), boussole tout de suite (délai réglable) pour lancer le pin suivant pendant la marche.
+Un pin déjà lancé n'est pas recliqué pendant 20 minutes (réglable) : sa coche verte n'apparaît qu'après la victoire.
