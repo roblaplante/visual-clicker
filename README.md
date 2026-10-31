@@ -76,3 +76,8 @@ n'importe quelle ligne du panneau des marches (son icône porte un badge d'allia
 Le grand compte pour une récolte de son type (Scierie = bois, Moulin = pain, Carrière = pierre, Mine = fer) : s'il est déjà
 en cours (icône de la ligne du panneau) ou qu'on vient de le lancer (nom lu en haut de l'écran de l'escouade), on retire
 une petite récolte de ce type du plan.
+
+Marches : réglage « Nombre total de marches » (5 ou 6). Le nombre de marches sorties est compté sur le panneau « Marche »
+(ligne = rond turquoise ou bouton cyan). Missions de renseignements : si toutes les marches sont prises, une chasse à tête
+de loup (bouton « Attaquer ») est ignorée avec retour aux pins, mais les tentes (Secourir) et épées croisées (Combattre)
+continuent. Farm : on ne lance pas plus de récoltes que de marches libres.

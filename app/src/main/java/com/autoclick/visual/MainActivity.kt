@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var thresholdBar: SeekBar
     private lateinit var intervalEdit: EditText
     private lateinit var cooldownEdit: EditText
+    private lateinit var marchEdit: EditText
 
     // Missions de renseignements
     private lateinit var meatEdit: EditText
@@ -204,6 +205,10 @@ class MainActivity : AppCompatActivity() {
             setText(sp.getLong("cooldown", 1000L).toString())
         }
         root.addView(cooldownEdit)
+
+        root.addView(label("Nombre total de marches (5 ou 6) : les chasses à tête de loup et les récoltes en ont besoin"))
+        marchEdit = numberField("marchTotal", 5)
+        root.addView(marchEdit)
     }
 
     // ---------- Missions de renseignements ----------
@@ -336,6 +341,7 @@ class MainActivity : AppCompatActivity() {
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
         e.putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
+        e.putInt("marchTotal", (marchEdit.text.toString().toIntOrNull() ?: 5).coerceIn(1, 6))
         if (screen == 1) {
             e.putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
             e.putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)

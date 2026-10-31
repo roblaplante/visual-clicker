@@ -83,6 +83,9 @@ class BotService : Service() {
     private var compassDelayMs = 3000L
     private var mode = "intel" // « intel » (missions de renseignements) ou « farm »
     private var minMeat = 20
+    private var marchTotal = 5 // nombre total de marches (5 ou 6), réglé dans l'appli
+    private var panelHeader: Mat? = null
+    private var farmCap = 6 // récoltes que l'on peut encore lancer = marches libres
     private var lastPanel: Mat? = null // bande du panneau des marches, pleine résolution (mode farm)
     private var panelY0 = 0
     private var grandRunning = false
@@ -163,6 +166,7 @@ class BotService : Service() {
         }, handler)
 
         setupDisplay()
+        loadPanelHeader()
         if (mode == "farm") {
             loadFarm()
         } else {
@@ -184,6 +188,7 @@ class BotService : Service() {
         interval = sp.getLong("interval", 500L).coerceAtLeast(100L)
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
         minMeat = sp.getInt("minMeat", 20)
+        marchTotal = sp.getInt("marchTotal", 5).coerceIn(1, 6)
         harvestMin = sp.getInt("harvestMin", 5).coerceIn(0, 50)
         idleMs = sp.getInt("idleSec", 30).coerceIn(0, 3600) * 1000L
         pinMemoryMs = sp.getInt("pinMemory", 20).coerceIn(0, 600) * 60_000L
@@ -242,6 +247,66 @@ class BotService : Service() {
             } catch (_: Exception) {
             }
         }
+    }
+
+    /** En-tête « ▼ Marche » du panneau des marches (prise sur 1080 px) : sert à situer ses lignes. */
+    private fun loadPanelHeader() {
+        try {
+            val bmp = assets.open("farm/panneau_entete.png").use { BitmapFactory.decodeStream(it) } ?: return
+            val rgba = Mat()
+            Utils.bitmapToMat(bmp, rgba)
+            bmp.recycle()
+            val gray = Mat()
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            rgba.release()
+            val f = SCALE * w / 1080.0
+            val small = Mat()
+            Imgproc.resize(gray, small, Size(), f, f, Imgproc.INTER_AREA)
+            gray.release()
+            panelHeader = small
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Nombre de marches sorties = lignes du panneau « Marche » : une ligne a un rond turquoise (ressource) à gauche
+     * ou un bouton cyan (rappel / accélération) à droite. 0 si le panneau n'est pas visible (aucune marche sortie).
+     */
+    private fun usedMarches(screen: Mat): Int {
+        val ht = panelHeader ?: return 0
+        val hm = matchBest(screen, ht) ?: return 0
+        if (hm.maxVal < 0.78) return 0
+        val panel = lastPanel ?: return 0
+        val sc = w / 1080.0
+        val headerY = (hm.maxLoc.y + ht.rows() / 2.0) / SCALE
+        val rgb3 = Mat()
+        Imgproc.cvtColor(panel, rgb3, Imgproc.COLOR_RGBA2RGB)
+        val hsv = Mat()
+        Imgproc.cvtColor(rgb3, hsv, Imgproc.COLOR_RGB2HSV)
+        rgb3.release()
+        var used = 0
+        for (i in 0 until 6) {
+            val cy = headerY + (82 + i * 91) * sc - panelY0
+            val teal = fraction(hsv, 22 * sc, cy - 28 * sc, 62 * sc, 56 * sc, Scalar(80.0, 50.0, 70.0), Scalar(100.0, 255.0, 255.0))
+            val cyan = fraction(hsv, 303 * sc, cy - 24 * sc, 51 * sc, 48 * sc, Scalar(84.0, 90.0, 170.0), Scalar(102.0, 255.0, 255.0))
+            if (teal > 0.35 || cyan > 0.3) used++
+        }
+        hsv.release()
+        return used
+    }
+
+    private fun fraction(hsv: Mat, x: Double, y: Double, rw: Double, rh: Double, lo: Scalar, hi: Scalar): Double {
+        val rx = x.toInt()
+        val ry = y.toInt()
+        val iw = rw.toInt()
+        val ih = rh.toInt()
+        if (rx < 0 || ry < 0 || iw <= 0 || ih <= 0 || rx + iw > hsv.cols() || ry + ih > hsv.rows()) return 0.0
+        val roi = Mat(hsv, Rect(rx, ry, iw, ih))
+        val mask = Mat()
+        Core.inRange(roi, lo, hi, mask)
+        val f = Core.countNonZero(mask).toDouble() / (iw * ih)
+        mask.release()
+        return f
     }
 
     /** Bouton boussole de la carte du monde (retour à « Mission de renseignements »), pris sur 1080 px. */
@@ -344,11 +409,11 @@ class BotService : Service() {
         val my0 = (0.105 * img.width).toInt()
         val my1 = minOf((0.158 * img.width).toInt(), img.height)
         val meat = Mat(rgba, Rect(mx0, my0, mx1 - mx0, my1 - my0)).clone()
-        if (mode == "farm") {
+        run {
             val sc = img.width / 1080.0
             panelY0 = (380 * sc).toInt().coerceAtMost(img.height - 2)
             val py1 = minOf((1010 * sc).toInt(), img.height)
-            val px1 = minOf((320 * sc).toInt(), img.width)
+            val px1 = minOf((372 * sc).toInt(), img.width)
             lastPanel?.release()
             lastPanel = Mat(rgba, Rect(0, panelY0, px1, py1 - panelY0)).clone()
         }
@@ -415,6 +480,15 @@ class BotService : Service() {
                 if (off != null) {
                     cx += (off[0] * w / 1080.0).toFloat()
                     cy += (off[1] * w / 1080.0).toFloat()
+                }
+                if (templateNames[i] == "04_attaquer.png") {
+                    // « Attaquer » = chasse à tête de loup : elle exige une marche libre (tentes et épées croisées non).
+                    val used = usedMarches(screen)
+                    if (used >= marchTotal) {
+                        log("marches $used/$marchTotal : aucune libre, chasse ignorée, retour à la carte des pins")
+                        backToPins(screen, now)
+                        return
+                    }
                 }
                 if (templateNames[i] in compassAfter) {
                     compassArmedAt = now
@@ -573,6 +647,24 @@ class BotService : Service() {
         toast(msg)
     }
 
+    /** Retour à la carte des pins : boussole reconnue, sinon sa position fixe. */
+    private fun backToPins(screen: Mat, now: Long) {
+        val c = compass
+        val mm = if (c != null) matchBest(screen, c) else null
+        val x: Float
+        val y: Float
+        if (c != null && mm != null && mm.maxVal >= minOf(threshold, 0.75)) {
+            x = ((mm.maxLoc.x + c.cols() / 2.0) / SCALE).toFloat()
+            y = ((mm.maxLoc.y + c.rows() / 2.0) / SCALE).toFloat()
+        } else {
+            x = (0.921 * w).toFloat()
+            y = (0.732 * h).toFloat()
+        }
+        lastClick = now
+        ClickAccessibilityService.instance?.click(x, y)
+        toast("Retour à la carte des pins")
+    }
+
     // Plages HSV (OpenCV : H 0-179) des pins : bleu, mauve, or.
     private val pinRanges = listOf(
         Scalar(95.0, 100.0, 100.0) to Scalar(112.0, 255.0, 255.0),
@@ -728,6 +820,7 @@ class BotService : Service() {
         farmTarget["BOIS"] = sp.getInt("farmBois", 0).coerceIn(0, 6)
         farmTarget["PIERRE"] = sp.getInt("farmPierre", 0).coerceIn(0, 6)
         farmTarget["FER"] = sp.getInt("farmFer", 0).coerceIn(0, 6)
+        farmCap = marchTotal
         buildPlan(null)
     }
 
@@ -837,7 +930,7 @@ class BotService : Service() {
 
     /** 6 marches au maximum (le grand compte pour une récolte de son type : on plafonne après l'avoir su). */
     private fun capPlan() {
-        while (farmTasks.size > 6) farmTasks.removeAt(farmTasks.size - 1)
+        while (farmTasks.size > farmCap) farmTasks.removeAt(farmTasks.size - 1)
     }
 
     private fun nextFarmTask() {
@@ -862,9 +955,13 @@ class BotService : Service() {
                 val active = readActive(screen)
                 planTries++
                 if (active != null) {
+                    val used = usedMarches(screen)
+                    farmCap = (marchTotal - used).coerceAtLeast(0)
+                    log("farm : marches $used/$marchTotal, $farmCap libre(s)")
                     buildPlan(active)
                     planAdjusted = true
                 } else if (planTries >= 6) {
+                    farmCap = marchTotal
                     log("farm : panneau des marches introuvable, plan complet")
                     planAdjusted = true
                 }
@@ -1208,6 +1305,7 @@ class BotService : Service() {
         lastGray?.release()
         lastRgb?.release()
         lastPanel?.release()
+        panelHeader?.release()
         farm.values.forEach { it.release() }
         farm.clear()
         gates.forEach { it.release() }
