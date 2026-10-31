@@ -32,6 +32,8 @@ PIN_RANGES = [
 # Titre de l'écran des pins -> largeur d'écran sur laquelle l'image a été prise
 # Décalage de clic (px, écran 1080 de large) : on touche sous la bannière « Victoire ! »
 CLICK_OFFSETS = {"01_victoire.png": (0, 1000)}
+# Après ces boutons : retour à la carte des pins par la boussole (fin de combat / secours de la tente)
+COMPASS_AFTER = {"01_victoire.png", "07_secourir.png"}
 GATES = {"titre_mission_fr.png": 1080.0, "titre_mission_en.png": 540.0}
 
 
@@ -132,6 +134,7 @@ def detect(img, templates, gates, threshold, compass=None, min_meat=0):
             if name in CLICK_OFFSETS:
                 x += int(CLICK_OFFSETS[name][0] * sw / 1080)
                 y += int(CLICK_OFFSETS[name][1] * sw / 1080)
+            if name in COMPASS_AFTER:
                 STATE["compass_until"] = time.time() + 30
             return f"{name} ({score:.2f})", x, y
     if compass is not None and time.time() < STATE["compass_until"]:

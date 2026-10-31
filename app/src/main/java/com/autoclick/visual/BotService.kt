@@ -82,6 +82,8 @@ class BotService : Service() {
     private var minMeat = 20
     // Décalage du clic (en px d'un écran de 1080 de large) par rapport au centre de l'image reconnue :
     // sur « Victoire ! » on touche en dessous de la bannière (« Appuie n'importe où pour quitter »).
+    // Boutons après lesquels on revient à la carte des pins par la boussole : fin d'un combat ou secours (tente).
+    private val compassAfter = setOf("01_victoire.png", "07_secourir.png")
     private val clickOffsets = mapOf("01_victoire.png" to doubleArrayOf(0.0, 1000.0))
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private var lastGray: Mat? = null
@@ -370,7 +372,7 @@ class BotService : Service() {
                     cx += (off[0] * w / 1080.0).toFloat()
                     cy += (off[1] * w / 1080.0).toFloat()
                 }
-                if (templateNames[i] == "01_victoire.png") waitCompassUntil = now + 30_000
+                if (templateNames[i] in compassAfter) waitCompassUntil = now + 30_000
                 lastClick = now
                 ClickAccessibilityService.instance?.click(cx, cy)
                 toast("Clic (%.2f)".format(mm.maxVal))

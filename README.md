@@ -41,3 +41,5 @@ pin (sans coche verte, si viande >= minimum) > Voir > Attaquer / Conquérir > D�
 Victoire (touche sous la bannière) > boussole de la carte du monde (seulement juste après une victoire)
 > retour à « Mission de renseignements » > pin suivant.
 La viande est lue en haut à droite de l'écran des pins ; sous le minimum réglé (20 par défaut), l'appli se met en pause.
+
+Tente : pin > Voir > Secourir > (on reste sur la carte du monde) > boussole > carte des pins.
