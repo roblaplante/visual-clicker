@@ -118,7 +118,8 @@ def read_meat(img):
         return None
 
 
-STATE = {"compass_until": 0.0}
+STATE = {"armed_at": 0.0}
+COMPASS_DELAY = 3.0  # secondes à attendre après une victoire / un secours (option --compass-delay)
 
 
 def detect(img, templates, gates, threshold, compass=None, min_meat=0):
@@ -135,13 +136,20 @@ def detect(img, templates, gates, threshold, compass=None, min_meat=0):
                 x += int(CLICK_OFFSETS[name][0] * sw / 1080)
                 y += int(CLICK_OFFSETS[name][1] * sw / 1080)
             if name in COMPASS_AFTER:
-                STATE["compass_until"] = time.time() + 30
+                STATE["armed_at"] = time.time()
             return f"{name} ({score:.2f})", x, y
-    if compass is not None and time.time() < STATE["compass_until"]:
-        score, loc = best_match(gray, compass)
-        if score >= threshold:
-            STATE["compass_until"] = 0.0
-            return "boussole (retour carte des pins)", int((loc[0] + compass.shape[1] / 2) / SCALE), int((loc[1] + compass.shape[0] / 2) / SCALE)
+    if STATE["armed_at"]:
+        since = time.time() - STATE["armed_at"]
+        if since > COMPASS_DELAY + 20:
+            STATE["armed_at"] = 0.0
+        elif since >= COMPASS_DELAY:
+            score, loc = best_match(gray, compass) if compass is not None else (0.0, (0, 0))
+            if compass is not None and score >= min(threshold, 0.75):
+                STATE["armed_at"] = 0.0
+                return "boussole (retour carte des pins)", int((loc[0] + compass.shape[1] / 2) / SCALE), int((loc[1] + compass.shape[0] / 2) / SCALE)
+            if since >= COMPASS_DELAY + 6:  # repli : la boussole est toujours au même endroit
+                STATE["armed_at"] = 0.0
+                return f"boussole en position fixe (meilleur score {score:.2f})", int(0.921 * img.shape[1]), int(0.732 * img.shape[0])
     if any(best_match(gray, g)[0] >= 0.85 for g in gates):
         small = cv2.resize(img, None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_AREA)
         pin = find_pin(small)
@@ -187,15 +195,18 @@ def main():
     ap.add_argument("--adb", default="adb")
     ap.add_argument("--serial", default=None, help="numéro de série si plusieurs appareils")
     ap.add_argument("--min-meat", type=int, default=20, help="viande minimum avant un pin (0 = pas de contrôle ; exige pytesseract)")
+    ap.add_argument("--compass-delay", type=float, default=3.0, help="secondes d'attente avant la boussole")
     ap.add_argument("--image", default=None, help="test à blanc sur une capture (aucun clic)")
     a = ap.parse_args()
+    global COMPASS_DELAY
+    COMPASS_DELAY = a.compass_delay
 
     templates = load_templates(a.templates)
     print(f"{len(templates)} image(s) chargée(s) : {[n for n, _ in templates]}")
 
     if a.image:
         img = cv2.imread(a.image)
-        STATE["compass_until"] = time.time() + 30  # test : on suppose qu'on sort d'une victoire
+        STATE["armed_at"] = time.time() - COMPASS_DELAY - 0.1  # test : on suppose qu'on sort d'une victoire
         r = detect(img, templates, load_gates(a.gates, img.shape[1]), a.threshold,
                    load_compass(a.gates, img.shape[1]), a.min_meat)
         print("Cliquerait :", r if r else "rien")

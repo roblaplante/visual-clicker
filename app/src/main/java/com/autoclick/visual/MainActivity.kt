@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var intervalEdit: EditText
     private lateinit var cooldownEdit: EditText
     private lateinit var meatEdit: EditText
+    private lateinit var compassEdit: EditText
 
     private val sp by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
     private val dir by lazy { File(filesDir, "templates").apply { mkdirs() } }
@@ -126,7 +127,16 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(meatEdit)
 
+        root.addView(label("Boussole : attente après une victoire ou un secours (secondes)"))
+        compassEdit = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(sp.getInt("compassDelay", 3).toString())
+        }
+        root.addView(compassEdit)
+
         root.addView(button("4. Démarrer") { start() })
+        root.addView(button("Voir le journal des actions") { showLog() })
+        root.addView(button("Effacer le journal") { File(filesDir, "journal.txt").delete() })
         root.addView(
             label(
                 "Un bouton flottant ▶ apparaît : touchez-le pour lancer / mettre en pause " +
@@ -160,6 +170,33 @@ class MainActivity : AppCompatActivity() {
         refresh()
     }
 
+    /** Les réglages sont gardés en mémoire à chaque sortie de l'écran et au démarrage. */
+    private fun saveSettings() {
+        if (!::compassEdit.isInitialized) return
+        sp.edit()
+            .putInt("threshold", 55 + thresholdBar.progress)
+            .putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
+            .putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
+            .putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
+            .putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
+            .apply()
+    }
+
+    override fun onPause() {
+        saveSettings()
+        super.onPause()
+    }
+
+    private fun showLog() {
+        val f = File(filesDir, "journal.txt")
+        val text = if (f.exists()) f.readLines().takeLast(60).joinToString("\n") else "(journal vide)"
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Journal (60 dernières lignes)")
+            .setMessage(text)
+            .setPositiveButton("Fermer", null)
+            .show()
+    }
+
     private fun start() {
         if (ClickAccessibilityService.instance == null) {
             Toast.makeText(this, "Activez d'abord le service d'accessibilité (étape 1)", Toast.LENGTH_LONG).show()
@@ -169,12 +206,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Autorisez d'abord l'affichage par-dessus (étape 2)", Toast.LENGTH_LONG).show()
             return
         }
-        sp.edit()
-            .putInt("threshold", 55 + thresholdBar.progress)
-            .putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
-            .putLong("cooldown", cooldownEdit.text.toString().toLongOrNull() ?: 1000L)
-            .putInt("minMeat", meatEdit.text.toString().toIntOrNull() ?: 20)
-            .apply()
+        saveSettings()
         val mpm = getSystemService(MediaProjectionManager::class.java)
         capture.launch(mpm.createScreenCaptureIntent())
     }

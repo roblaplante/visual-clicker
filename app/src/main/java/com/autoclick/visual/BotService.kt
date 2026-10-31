@@ -78,7 +78,8 @@ class BotService : Service() {
     private val templateNames = mutableListOf<String>()
     private var compass: Mat? = null
     private var lastMeat: Mat? = null
-    private var waitCompassUntil = 0L
+    private var compassArmedAt = 0L // instant du dernier « Victoire » / « Secourir » (0 = rien à attendre)
+    private var compassDelayMs = 3000L
     private var minMeat = 20
     // Décalage du clic (en px d'un écran de 1080 de large) par rapport au centre de l'image reconnue :
     // sur « Victoire ! » on touche en dessous de la bannière (« Appuie n'importe où pour quitter »).
@@ -130,6 +131,7 @@ class BotService : Service() {
         handler = Handler(thread!!.looper)
 
         loadConfig()
+        log("démarrage : seuil $threshold, boussole ${compassDelayMs / 1000} s, viande min $minMeat")
 
         val mpm = getSystemService(MediaProjectionManager::class.java)
         val proj = mpm.getMediaProjection(code, data)
@@ -157,6 +159,7 @@ class BotService : Service() {
         interval = sp.getLong("interval", 500L).coerceAtLeast(100L)
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
         minMeat = sp.getInt("minMeat", 20)
+        compassDelayMs = sp.getInt("compassDelay", 3).coerceIn(0, 60) * 1000L
     }
 
     private fun addTemplate(bmp: Bitmap, factor: Double, name: String) {
@@ -372,28 +375,49 @@ class BotService : Service() {
                     cx += (off[0] * w / 1080.0).toFloat()
                     cy += (off[1] * w / 1080.0).toFloat()
                 }
-                if (templateNames[i] in compassAfter) waitCompassUntil = now + 30_000
+                if (templateNames[i] in compassAfter) {
+                    compassArmedAt = now
+                    log("boussole armée par ${templateNames[i]} (délai ${compassDelayMs / 1000} s)")
+                }
                 lastClick = now
                 ClickAccessibilityService.instance?.click(cx, cy)
+                log("clic ${templateNames[i]} (%.2f) en (%d, %d)".format(mm.maxVal, cx.toInt(), cy.toInt()))
                 toast("Clic (%.2f)".format(mm.maxVal))
                 return
             }
         }
-        // 2) après une victoire : boussole de la carte du monde pour revenir aux pins
-        if (waitCompassUntil > now) {
-            val c = compass
-            val mm = if (c != null) matchBest(screen, c) else null
-            if (c != null && mm != null && mm.maxVal >= threshold) {
-                val cx = ((mm.maxLoc.x + c.cols() / 2.0) / SCALE).toFloat()
-                val cy = ((mm.maxLoc.y + c.rows() / 2.0) / SCALE).toFloat()
-                waitCompassUntil = 0L
-                lastClick = now
-                ClickAccessibilityService.instance?.click(cx, cy)
-                toast("Retour à la carte des pins")
-                return
+        // 2) après une victoire ou un secours : boussole de la carte du monde pour revenir aux pins
+        if (compassArmedAt > 0L) {
+            val since = now - compassArmedAt
+            if (since > compassDelayMs + 20_000) {
+                log("boussole abandonnée (introuvable pendant ${(since / 1000)} s)")
+                compassArmedAt = 0L
+            } else if (since >= compassDelayMs) {
+                val c = compass
+                val mm = if (c != null) matchBest(screen, c) else null
+                val score = mm?.maxVal ?: 0.0
+                if (c != null && mm != null && score >= minOf(threshold, 0.75)) {
+                    val cx = ((mm.maxLoc.x + c.cols() / 2.0) / SCALE).toFloat()
+                    val cy = ((mm.maxLoc.y + c.rows() / 2.0) / SCALE).toFloat()
+                    compassArmedAt = 0L
+                    lastClick = now
+                    ClickAccessibilityService.instance?.click(cx, cy)
+                    log("clic boussole (%.2f) en (%d, %d)".format(score, cx.toInt(), cy.toInt()))
+                    toast("Retour à la carte des pins")
+                    return
+                }
+                if (since >= compassDelayMs + 6_000) {
+                    // Repli : la boussole est toujours au même endroit de la carte du monde.
+                    val fx = (0.921 * w).toFloat()
+                    val fy = (0.732 * h).toFloat()
+                    compassArmedAt = 0L
+                    lastClick = now
+                    ClickAccessibilityService.instance?.click(fx, fy)
+                    log("clic boussole en position fixe (%d, %d) : meilleur score %.2f".format(fx.toInt(), fy.toInt(), score))
+                    toast("Retour à la carte (position fixe)")
+                    return
+                }
             }
-        } else {
-            waitCompassUntil = 0L
         }
         // 3) écran des pins (« Mission de renseignements » / « Intel Mission »)
         if (gates.isEmpty()) return
@@ -407,6 +431,7 @@ class BotService : Service() {
         if (!enoughMeat(meat)) return
         lastClick = now
         ClickAccessibilityService.instance?.click(pin.first, pin.second)
+        log("clic pin en (%d, %d)".format(pin.first.toInt(), pin.second.toInt()))
         toast("Clic sur un pin")
     }
 
@@ -415,6 +440,7 @@ class BotService : Service() {
         if (minMeat <= 0) return true
         val v = readMeat(meat) ?: return true
         if (v >= minMeat) return true
+        log("viande $v < $minMeat : pause")
         main.post { pauseBot("Plus assez de viande ($v < $minMeat) : pause") }
         return false
     }
@@ -437,6 +463,19 @@ class BotService : Service() {
             Regex("\\d+").findAll(text).map { it.value }.maxByOrNull { it.length }?.toIntOrNull()
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /** Journal des actions (consultable dans l'appli) : aide à comprendre ce qui s'est passé. */
+    private fun log(msg: String) {
+        try {
+            synchronized(BotService::class.java) {
+                val f = File(filesDir, "journal.txt")
+                val line = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.FRANCE).format(java.util.Date()) + " " + msg + "\n"
+                f.appendText(line)
+                if (f.length() > 30_000) f.writeText(f.readLines().takeLast(150).joinToString("\n", postfix = "\n"))
+            }
+        } catch (_: Exception) {
         }
     }
 
