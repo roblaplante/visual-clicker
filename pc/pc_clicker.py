@@ -31,7 +31,7 @@ PIN_RANGES = [
 ]
 # Titre de l'écran des pins -> largeur d'écran sur laquelle l'image a été prise
 # Décalage de clic (px, écran 1080 de large) : on touche sous la bannière « Victoire ! »
-CLICK_OFFSETS = {"01_victoire.png": (0, 1000)}
+CLICK_OFFSETS = {"01_victoire.png": (0, 1000), "09_recompenses.png": (0, 1000)}
 # Après ces boutons : retour à la carte des pins par la boussole (fin de combat / secours de la tente)
 COMPASS_AFTER = {"01_victoire.png", "03_deployer.png", "07_secourir.png"}
 PINS_SEEN = []  # (x, y, instant) des pins déjà lancés
@@ -118,7 +118,8 @@ def read_meat(img):
         _, b = cv2.threshold(g, 170, 255, cv2.THRESH_BINARY_INV)
         b = cv2.copyMakeBorder(b, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
         t = pytesseract.image_to_string(b, config="--psm 7 -c tessedit_char_whitelist=0123456789").strip()
-        return int(t) if t.isdigit() else None
+        t = "".join(ch for ch in t if ch.isdigit())
+        return int(t) if t else None
     except Exception:
         return None
 

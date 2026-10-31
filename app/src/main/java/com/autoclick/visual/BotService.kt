@@ -93,7 +93,10 @@ class BotService : Service() {
     // sur « Victoire ! » on touche en dessous de la bannière (« Appuie n'importe où pour quitter »).
     // Boutons après lesquels on revient à la carte des pins par la boussole : troupes parties (ours), victoire, secours (tente).
     private val compassAfter = setOf("01_victoire.png", "03_deployer.png", "07_secourir.png")
-    private val clickOffsets = mapOf("01_victoire.png" to doubleArrayOf(0.0, 1000.0))
+    private val clickOffsets = mapOf(
+        "01_victoire.png" to doubleArrayOf(0.0, 1000.0),
+        "09_recompenses.png" to doubleArrayOf(0.0, 1000.0) // « Récompenses » : appuyer n'importe où ferme l'écran
+    )
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private var lastGray: Mat? = null
     private var lastRgb: Mat? = null
@@ -493,7 +496,7 @@ class BotService : Service() {
             gray.release(); big.release(); bin.release(); padded.release()
             val text = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 5, TimeUnit.SECONDS).text
             bmp.recycle()
-            Regex("\\d+").findAll(text).map { it.value }.maxByOrNull { it.length }?.toIntOrNull()
+            text.filter { it.isDigit() }.toIntOrNull() // « 2 873 » -> 2873
         } catch (_: Exception) {
             null
         }
