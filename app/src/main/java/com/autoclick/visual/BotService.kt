@@ -1155,7 +1155,10 @@ class BotService : Service() {
         }
         // 2b) fenêtre du grand avec « Rappeler » : notre escouade y collecte déjà. On passe (sans rappeler !).
         if (task == "GRAND" && farmMatch(screen, "rappeler", 0.8) != null) {
-            log("farm : grand déjà en cours (bouton Rappeler) : on passe sans rappeler")
+            grandRunning = true
+            val gt = grandType ?: readGrandDialogType(rgb)
+            log("farm : grand déjà en cours (bouton Rappeler, type ${gt ?: "inconnu"}) : on passe sans rappeler")
+            if (gt != null) applyGrandType(gt)
             nextFarmTask()
             return
         }
@@ -1252,6 +1255,17 @@ class BotService : Service() {
 
     /** Fait glisser la liste de [shift] px (positif = vers la droite) puis laisse le temps à l'animation. */
     /** Nom du bâtiment en haut de l'écran de l'escouade : Scierie = bois, Moulin = pain, Carrière = pierre, Mine = fer. */
+    private fun typeFromText(raw: String): String? {
+        val t = raw.lowercase()
+        return when {
+            "scier" in t || "sawmill" in t || "lumber" in t -> "BOIS"
+            "moul" in t || "mill" in t || "farm" in t || "ferme" in t -> "PAIN"
+            "carri" in t || "quarry" in t || "stone" in t -> "PIERRE"
+            "mine" in t || "iron" in t || t.trim().endsWith("fer") -> "FER"
+            else -> null
+        }
+    }
+
     private fun readGrandType(rgb: Mat): String? {
         val sc = rgb.cols() / 1080.0
         val x0 = (125 * sc).toInt()
@@ -1259,14 +1273,18 @@ class BotService : Service() {
         val y0 = (100 * sc).toInt()
         val y1 = minOf((190 * sc).toInt(), rgb.rows())
         if (x1 <= x0 || y1 <= y0) return null
-        val t = ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))).lowercase()
-        return when {
-            "scier" in t -> "BOIS"
-            "moul" in t -> "PAIN"
-            "carri" in t -> "PIERRE"
-            "mine" in t || t.trim().endsWith("fer") -> "FER"
-            else -> null
-        }
+        return typeFromText(ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))))
+    }
+
+    /** Titre de la fenêtre du grand sur la carte (« Grande Scierie », « Grand Moulin », « Grande Carrière », « Grande Mine »). */
+    private fun readGrandDialogType(rgb: Mat): String? {
+        val sc = rgb.cols() / 1080.0
+        val x0 = (240 * sc).toInt()
+        val x1 = minOf((840 * sc).toInt(), rgb.cols())
+        val y0 = (1560 * sc).toInt()
+        val y1 = minOf((1700 * sc).toInt(), rgb.rows())
+        if (x1 <= x0 || y1 <= y0) return null
+        return typeFromText(ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))))
     }
 
     /** Le grand couvre une récolte de son type : on retire une petite de ce type du reste du plan. */
