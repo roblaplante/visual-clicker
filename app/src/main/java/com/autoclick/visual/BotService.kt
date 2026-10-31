@@ -625,24 +625,46 @@ class BotService : Service() {
                 val w = stats.get(i, Imgproc.CC_STAT_WIDTH)[0]
                 val h = stats.get(i, Imgproc.CC_STAT_HEIGHT)[0]
                 val a = stats.get(i, Imgproc.CC_STAT_AREA)[0]
-                if (w < 0.085 * sw || w > 0.125 * sw || h < 0.11 * sw || h > 0.185 * sw) continue
-                if (h / w < 1.1 || h / w > 1.8 || a > 0.0105 * sw * sw) continue
-                statCand++
-                visible.add(doubleArrayOf((x + w / 2) / SCALE, (y + 0.4 * h) / SCALE))
-                val done = checks.any {
-                    abs(it[0] - (x + 0.81 * w)) < 0.35 * w &&
-                        abs(it[1] - (y + 0.23 * w)) < 0.35 * w &&
-                        it[2] >= 0.004 * w * w
+                if (h < 0.11 * sw || h > 0.185 * sw) continue // le pin hexagonal (tête de roi) est bien plus haut
+                val pw = 0.099 * sw // largeur d'un pin
+                val subs = ArrayList<DoubleArray>() // (x gauche, largeur) de chaque pin du bloc
+                if (w >= 0.085 * sw && w <= 0.125 * sw && h / w >= 1.1 && h / w <= 1.8 && a <= 0.0105 * sw * sw) {
+                    subs.add(doubleArrayOf(x, w))
+                } else if (w > 0.125 * sw && w <= 0.4 * sw) {
+                    // Plusieurs pins de même couleur qui se touchent forment un seul bloc large : on le découpe,
+                    // sauf si une coche verte s'y trouve (pin terminé : « Récupérer Tout » le fera disparaître).
+                    val inside = checks.any {
+                        it[0] >= x - 0.2 * pw && it[0] <= x + w + 0.2 * pw && it[1] >= y - 0.1 * h && it[1] <= y + 0.6 * h
+                    }
+                    if (inside) continue
+                    val k = (Math.round((w - pw) / (0.9 * pw)).toInt() + 1).coerceIn(2, 4)
+                    for (j in 0 until k) subs.add(doubleArrayOf(x + j * (w - pw) / (k - 1), pw))
+                } else {
+                    continue
                 }
-                if (done) { statDone++; continue }
-                val fx = (x + w / 2) / SCALE
-                val fy = (y + 0.4 * h) / SCALE
-                val tnow = SystemClock.uptimeMillis()
-                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.3 * w / SCALE && abs(it.y - fy) < 0.3 * w / SCALE }) { statSeen++; continue }
-                val cy = y + 0.4 * h
-                if (cy < bestY) {
-                    bestY = cy
-                    bestX = x + w / 2
+                for (sub in subs) {
+                    val sx = sub[0]
+                    val spw = sub[1]
+                    statCand++
+                    visible.add(doubleArrayOf((sx + spw / 2) / SCALE, (y + 0.4 * h) / SCALE))
+                    val done = checks.any {
+                        abs(it[0] - (sx + 0.81 * spw)) < 0.35 * spw &&
+                            abs(it[1] - (y + 0.23 * spw)) < 0.35 * spw &&
+                            it[2] >= 0.004 * spw * spw
+                    }
+                    if (done) { statDone++; continue }
+                    val fx = (sx + spw / 2) / SCALE
+                    val fy = (y + 0.4 * h) / SCALE
+                    val tnow = SystemClock.uptimeMillis()
+                    if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
+                        statSeen++
+                        continue
+                    }
+                    val cy = y + 0.4 * h
+                    if (cy < bestY) {
+                        bestY = cy
+                        bestX = sx + spw / 2
+                    }
                 }
             }
             mask.release(); labels.release(); stats.release(); cents.release()
@@ -677,7 +699,7 @@ class BotService : Service() {
         val names = listOf(
             "loupe", "tile_pain", "tile_bois", "tile_pierre", "tile_fer", "tile_terreur",
             "rechercher", "collecte_dialog", "demanteler", "squad_collecte", "deployer_farm",
-            "panneau_entete", "panneau_pain", "panneau_bois", "panneau_pierre", "panneau_fer"
+            "panneau_entete", "panneau_pain", "panneau_bois", "panneau_pierre", "panneau_fer", "rappeler"
         )
         for (name in names) {
             try {
@@ -772,15 +794,15 @@ class BotService : Service() {
                 res.release()
                 if (v > bs) { second = bs; bs = v; best = k } else if (v > second) { second = v }
             }
-            if (bs >= 0.9 && bs - second >= 0.08) {
-                // Durée de collecte restante : plus de 7 h = c'est le grand bâtiment, pas une petite récolte.
-                val secs = readRowSeconds(headerY + (82 + i * 91) * s, s)
-                if (secs != null && secs > 7 * 3600) {
-                    grandRunning = true
-                    log("farm : ligne ${i + 1} ($best) : ${secs / 3600}h${(secs % 3600) / 60}min restantes, c'est le grand")
-                } else {
-                    counts[best] = (counts[best] ?: 0) + 1
-                }
+            val classified = bs >= 0.9 && bs - second >= 0.08
+            // Durée de collecte restante : plus de 7 h = c'est le grand bâtiment (son icône porte un petit
+            // badge d'alliance, donc elle n'est pas toujours reconnue) ; sinon c'est une petite récolte.
+            val secs = readRowSeconds(headerY + (82 + i * 91) * s, s)
+            if (secs != null && secs > 7 * 3600) {
+                grandRunning = true
+                log("farm : ligne ${i + 1} : ${secs / 3600}h${(secs % 3600) / 60}min restantes, c'est le grand")
+            } else if (classified) {
+                counts[best] = (counts[best] ?: 0) + 1
             }
         }
         return counts
@@ -881,6 +903,12 @@ class BotService : Service() {
                 }
                 return
             }
+        }
+        // 2b) fenêtre du grand avec « Rappeler » : notre escouade y collecte déjà. On passe (sans rappeler !).
+        if (task == "GRAND" && farmMatch(screen, "rappeler", 0.8) != null) {
+            log("farm : grand déjà en cours (bouton Rappeler) : on passe sans rappeler")
+            nextFarmTask()
+            return
         }
         // 3) fenêtre « Collecte » sur la carte : celle du grand porte aussi un bouton « Démanteler »
         val mc = farmMatch(screen, "collecte_dialog")

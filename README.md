@@ -68,3 +68,7 @@ Le bouton ▶ est maintenant à droite de l'écran pour ne pas masquer ce pannea
 Grand en cours : une ligne du panneau des marches dont la durée de collecte dépasse 7 h est le grand bâtiment
 (lue par ML Kit) : il n'est pas compté parmi les petites et la tâche « grand » est sautée. Sinon, le test final reste
 l'écran de l'escouade : bouton Collecte gris = déjà lancé (flèche retour).
+
+Corrections : pins collés (même couleur) découpés en plusieurs pins ; grand en cours reconnu par une durée > 7 h sur
+n'importe quelle ligne du panneau des marches (son icône porte un badge d'alliance) ; fenêtre du grand avec le bouton
+« Rappeler » = déjà en collecte : on passe à la suivante sans jamais cliquer « Rappeler ».

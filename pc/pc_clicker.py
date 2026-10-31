@@ -100,19 +100,30 @@ def find_pin(small_bgr):
         n, _, st, _ = cv2.connectedComponentsWithStats(m)
         for i in range(1, n):
             x, y, w, h, a = [int(v) for v in st[i]]
-            if w < 0.085 * sw or w > 0.125 * sw or h < 0.11 * sw or h > 0.185 * sw:
+            if h < 0.11 * sw or h > 0.185 * sw:
+                continue  # le pin hexagonal (tête de roi) est bien plus haut : écarté
+            pw = 0.099 * sw  # largeur d'un pin
+            if 0.085 * sw <= w <= 0.125 * sw and 1.1 <= h / w <= 1.8 and a <= 0.0105 * sw * sw:
+                subs = [(x, w)]
+            elif 0.125 * sw < w <= 0.4 * sw:
+                # plusieurs pins de même couleur qui se touchent forment un seul bloc large : on le découpe,
+                # sauf si une coche verte est dans le bloc (pin terminé : on le laisse, « Récupérer Tout » le fera disparaître)
+                if any(x - 0.2 * pw <= kx <= x + w + 0.2 * pw and y - 0.1 * h <= ky <= y + 0.6 * h for kx, ky, _ in checks):
+                    continue
+                k = min(4, max(2, int(round((w - pw) / (0.9 * pw))) + 1))
+                subs = [(x + j * (w - pw) / (k - 1), pw) for j in range(k)]
+            else:
                 continue
-            if h / w < 1.1 or h / w > 1.8 or a > 0.0105 * sw * sw:
-                continue
-            if any(abs(kx - (x + 0.81 * w)) < 0.35 * w and abs(ky - (y + 0.23 * w)) < 0.35 * w
-                   and ka >= 0.004 * w * w for kx, ky, ka in checks):
-                continue
-            cx, cy = x + w / 2, y + 0.4 * h
-            if any(time.time() - t < PIN_MEMORY and abs(px - cx / SCALE) < 0.3 * w / SCALE and abs(py - cy / SCALE) < 0.3 * w / SCALE
-                   for px, py, t in PINS_SEEN):
-                continue
-            if best is None or cy < best[1]:
-                best = (cx, cy)
+            for sx, spw in subs:
+                if any(abs(kx - (sx + 0.81 * spw)) < 0.35 * spw and abs(ky - (y + 0.23 * spw)) < 0.35 * spw
+                       and ka >= 0.004 * spw * spw for kx, ky, ka in checks):
+                    continue
+                cx, cy = sx + spw / 2, y + 0.4 * h
+                if any(time.time() - t < PIN_MEMORY and abs(px - cx / SCALE) < 0.3 * spw / SCALE and abs(py - cy / SCALE) < 0.3 * spw / SCALE
+                       for px, py, t in PINS_SEEN):
+                    continue
+                if best is None or cy < best[1]:
+                    best = (cx, cy)
     FIND["checks"] = len(checks)
     if best is None:
         return None
