@@ -970,6 +970,8 @@ class BotService : Service() {
     private var grandChecked = false
     private var grandPresent = true // faux = aucun grand en place (on ne le cherche pas)
     private var knownGrandType: String? = null
+    private var knownGrandRunning = false // « Collecte » vert vu sous le grand dans le Territoire
+    private var grandCheckOk = false // la vérification a abouti : elle fait foi sur le panneau
     private var checkStartedAt = 0L
     private var checkTries = 0
     private var checkReads = 0
@@ -978,14 +980,14 @@ class BotService : Service() {
     private var checkReturning = false
 
     private fun resetGrandCheck() {
-        grandChecked = false; grandPresent = true; knownGrandType = null
+        grandChecked = false; grandPresent = true; knownGrandType = null; knownGrandRunning = false; grandCheckOk = false
         checkStartedAt = 0L; checkTries = 0; checkReads = 0; checkWaits = 0; checkBacks = 0; checkReturning = false
     }
 
     /** Plan de récolte = ce qu'on veut, moins ce que le panneau des marches montre déjà en cours. */
     private fun buildPlan(active: Map<String, Int>?) {
         farmTasks.clear()
-        if (active == null) { grandRunning = false; grandType = null }
+        if (active == null) { grandRunning = knownGrandRunning; grandType = if (knownGrandRunning) knownGrandType else null }
         if (farmGrand && grandPresent && !grandRunning) farmTasks.add("GRAND")
         val gType = grandType ?: knownGrandType
         for (k in farmKinds) {
@@ -1074,6 +1076,10 @@ class BotService : Service() {
             }
         }
         panelHsv?.release()
+        if (grandCheckOk) { // le « Collecte » vert du Territoire fait foi
+            grandRunning = knownGrandRunning
+            grandType = if (knownGrandRunning) knownGrandType else null
+        }
         return counts
     }
 
@@ -1304,7 +1310,7 @@ class BotService : Service() {
 
     /** Fait glisser la liste de [shift] px (positif = vers la droite) puis laisse le temps à l'animation. */
     /** Nom du bâtiment en haut de l'écran de l'escouade : Scierie = bois, Moulin = pain, Carrière = pierre, Mine = fer. */
-    private class GrandScan(val names: Int, val present: Boolean, val type: String?)
+    private class GrandScan(val names: Int, val present: Boolean, val running: Boolean, val type: String?)
 
     private fun isGrandName(t: String): Boolean {
         val l = t.lowercase()
@@ -1313,7 +1319,8 @@ class BotService : Service() {
 
     /**
      * Liste « Bâtiments Spéciaux » du Territoire d'Alliance : quatre grands (Moulin, Scierie, Carrière, Mine de Fer).
-     * Celui qui est en place affiche « Temps Restant » sous son nom ; les autres une phrase d'explication.
+     * Un grand en place affiche « Temps Restant » sous son nom. Celui que NOUS récoltons affiche en plus
+     * « Collecte » en vert : c'est ce vert (détecté par couleur) qui dit « déjà en cours ». Sans minuteur : on l'ignore.
      */
     private fun scanGrandList(rgb: Mat): GrandScan {
         val sc = rgb.cols() / 1080.0
@@ -1321,19 +1328,45 @@ class BotService : Service() {
         val x1 = minOf((1000 * sc).toInt(), rgb.cols())
         val y0 = (300 * sc).toInt()
         val y1 = minOf((2250 * sc).toInt(), rgb.rows())
-        if (x1 <= x0 || y1 <= y0) return GrandScan(0, false, null)
-        val lines = ocrLines(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), true)
+        if (x1 <= x0 || y1 <= y0) return GrandScan(0, false, false, null)
+        val crop = Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))
+        val lines = ocrLines(crop, true)
+        val hsv = Mat()
+        Imgproc.cvtColor(crop, hsv, Imgproc.COLOR_RGB2HSV)
         val timeRx = Regex("\\d{1,2}:\\d{2}:\\d{2}")
         val names = lines.filter { isGrandName(it.text) }
         val times = lines.filter {
             val t = it.text.lowercase()
             ("restant" in t || "remaining" in t || timeRx.containsMatchIn(t)) && "recharg" !in t && "reload" !in t
         }
+        var timerType: String? = null
+        var timerFound = false
+        var runType: String? = null
+        var runFound = false
         for (n in names) {
-            if (times.any { it.cy - n.cy in 15 * sc..130 * sc }) return GrandScan(names.size, true, typeFromText(n.text))
+            val type = typeFromText(n.text)
+            if (times.any { it.cy - n.cy in 15 * sc..130 * sc }) { timerFound = true; if (timerType == null) timerType = type }
+            // « Collecte » vert sous le minuteur (environ 130 px sous le nom)
+            val gy0 = (n.cy + 90 * sc).toInt().coerceAtLeast(0)
+            val gy1 = (n.cy + 175 * sc).toInt().coerceAtMost(crop.rows())
+            val gx0 = (10 * sc).toInt()
+            val gx1 = minOf((330 * sc).toInt(), crop.cols())
+            if (gy1 - gy0 > 4 && gx1 > gx0) {
+                val roi = Mat(hsv, Rect(gx0, gy0, gx1 - gx0, gy1 - gy0))
+                val m = Mat()
+                Core.inRange(roi, Scalar(40.0, 90.0, 90.0), Scalar(85.0, 255.0, 255.0), m)
+                val frac = Core.countNonZero(m).toDouble() / (m.rows() * m.cols())
+                m.release()
+                if (frac >= 0.012) { runFound = true; if (runType == null) runType = type }
+            }
         }
-        if (lines.any { "restant" in it.text.lowercase() || "remaining" in it.text.lowercase() }) return GrandScan(names.size, true, null)
-        return GrandScan(names.size, false, null)
+        hsv.release()
+        return when {
+            runFound -> GrandScan(names.size, true, true, runType)
+            timerFound -> GrandScan(names.size, true, false, timerType)
+            lines.any { "restant" in it.text.lowercase() || "remaining" in it.text.lowercase() } -> GrandScan(names.size, true, false, null)
+            else -> GrandScan(names.size, false, false, null)
+        }
     }
 
     private fun clickRef(x: Double, y: Double, msg: String) {
@@ -1387,7 +1420,15 @@ class BotService : Service() {
                     if (!scan.present && ++checkReads < 2) return true // deuxième lecture pour confirmer « aucun grand »
                     grandPresent = scan.present
                     knownGrandType = scan.type
-                    log(if (scan.present) "farm : grand en place : ${scan.type ?: "type inconnu"}" else "farm : aucun grand en place, on ne le cherche pas")
+                    knownGrandRunning = scan.running
+                    grandCheckOk = true
+                    log(
+                        when {
+                            scan.running -> "farm : grand déjà en cours de récolte (Collecte vert) : ${scan.type ?: "type inconnu"}"
+                            scan.present -> "farm : grand en place (minuteur, pas de Collecte vert) : ${scan.type ?: "type inconnu"} : à lancer"
+                            else -> "farm : aucun minuteur : pas de grand en place, on l'ignore"
+                        }
+                    )
                     checkReturning = true
                     lastClick = now
                     backArrow()
