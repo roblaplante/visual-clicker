@@ -1023,7 +1023,9 @@ class BotService : Service() {
         return d.substring(0, 2).toInt() * 3600 + d.substring(2, 4).toInt() * 60 + d.substring(4, 6).toInt()
     }
 
-    private fun readActive(screen: Mat): Map<String, Int>? {
+    private var panelGrandRows = 0 // lignes du panneau reconnues comme le grand à la dernière lecture
+
+    private fun readActive(screen: Mat, used: Int): Map<String, Int>? {
         val header = farmMatch(screen, "panneau_entete", 0.78) ?: return null
         val ht = farm["panneau_entete"]!!
         val s = w / 1080.0
@@ -1031,6 +1033,7 @@ class BotService : Service() {
         val counts = HashMap<String, Int>()
         grandRunning = false
         grandType = null
+        panelGrandRows = 0
         val panelHsv: Mat? = lastPanel?.let { pm ->
             val c3 = Mat()
             Imgproc.cvtColor(pm, c3, Imgproc.COLOR_RGBA2RGB)
@@ -1039,7 +1042,7 @@ class BotService : Service() {
             c3.release()
             hv
         }
-        for (i in 0 until 6) {
+        for (i in 0 until minOf(used, 6)) { // seules les lignes occupées : une ligne vide montre la carte derrière
             val cy = (headerY + (82 + i * 91) * s) * SCALE // centre de la ligne, en demi-résolution
             val bx = (10 * s * SCALE).toInt()
             val bw = (100 * s * SCALE).toInt()
@@ -1059,7 +1062,7 @@ class BotService : Service() {
                 res.release()
                 if (v > bs) { second = bs; bs = v; best = k } else if (v > second) { second = v }
             }
-            val classified = bs >= 0.9 && bs - second >= 0.08
+            val classified = bs >= 0.8 && bs - second >= 0.08
             // L'icône du grand porte une petite pastille blanche en bas à droite (même sous 7 h de collecte).
             val rowLocalY = headerY + (82 + i * 91) * s - panelY0
             val badge = panelHsv != null &&
@@ -1069,14 +1072,24 @@ class BotService : Service() {
             val secs = readRowSeconds(headerY + (82 + i * 91) * s, s)
             if (badge || (secs != null && secs > 7 * 3600)) {
                 grandRunning = true
+                panelGrandRows++
                 if (bs >= 0.65 && bs - second >= 0.12) grandType = best // l'icône du grand porte un badge : reconnaissance plus souple
                 log("farm : ligne ${i + 1} : c'est le grand (${if (badge) "pastille d'alliance" else "plus de 7 h"}, $grandType)")
             } else if (classified) {
                 counts[best] = (counts[best] ?: 0) + 1
+                log("farm : ligne ${i + 1} : $best (%.2f, suivant %.2f)".format(bs, second))
+            } else {
+                log("farm : ligne ${i + 1} : icône non reconnue (meilleur $best %.2f, suivant %.2f)".format(bs, second))
             }
         }
         panelHsv?.release()
         if (grandCheckOk) { // le « Collecte » vert du Territoire fait foi
+            val kt = knownGrandType
+            if (knownGrandRunning && panelGrandRows == 0 && kt != null && (counts[kt] ?: 0) > 0) {
+                counts[kt] = counts[kt]!! - 1 // la ligne du grand n'avait pas été repérée : ce n'est pas une petite
+                panelGrandRows = 1
+                log("farm : une ligne $kt du panneau est le grand")
+            }
             grandRunning = knownGrandRunning
             grandType = if (knownGrandRunning) knownGrandType else null
         }
@@ -1143,10 +1156,16 @@ class BotService : Service() {
         if (checkGrand(screen, rgb, now)) return
         if (!planAdjusted && farmIdx == 0) {
             if (farmMatch(screen, "loupe", 0.85) != null || farmMatch(screen, "rechercher", 0.8) != null) {
-                val active = readActive(screen)
+                val used = usedMarches(screen)
+                val active = readActive(screen, used)
                 planTries++
                 if (active != null) {
-                    val used = usedMarches(screen)
+                    // Toutes les marches sorties doivent avoir été reconnues : sinon on relit (fond changeant derrière le panneau)
+                    val seen = active.values.sum() + panelGrandRows
+                    if (seen < used && planTries < 5) {
+                        log("farm : panneau lu à moitié ($seen ligne(s) reconnue(s) sur $used), nouvelle lecture")
+                        return
+                    }
                     farmCap = (marchTotal - used).coerceAtLeast(0)
                     log("farm : marches $used/$marchTotal, $farmCap libre(s)")
                     buildPlan(active)
