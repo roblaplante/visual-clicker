@@ -95,3 +95,5 @@ Menu Hunt : 5 ou 6 marches, puis le nombre de chasses. Pour chaque chasse : loup
 « Appeler à un Ralliement » > Déployer. Avant chaque chasse, les marches sorties sont comptées (panneau à gauche) : s'il n'y
 en a plus de libre, l'appli attend. En fin de série, un panneau flottant propose de relancer de 1 à 10 chasses.
 Images : `app/src/main/assets/hunt/`.
+
+Hunt : sans marche libre, l'appli attend 150 s (réglable) avant de revérifier : le ralliement se remplit en 1 min, puis arrivée de tous, aller et retour.

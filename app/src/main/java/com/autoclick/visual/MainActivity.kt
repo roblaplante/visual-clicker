@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
     private var huntN = 5 // idem pour le hunt
     private lateinit var huntCountEdit: EditText
+    private lateinit var huntWaitEdit: EditText
     private var pendingMode = "intel"
 
     // Réglages communs aux deux modes
@@ -404,6 +405,10 @@ class MainActivity : AppCompatActivity() {
                 "Quand elles sont terminées, un petit panneau flottant propose d'en relancer de 1 à 10 d'un seul toucher."
             )
         )
+        root.addView(label("Si aucune marche n'est libre, attendre avant de revérifier (secondes)"))
+        huntWaitEdit = numberField("huntWait", 150)
+        root.addView(huntWaitEdit)
+        root.addView(label("150 s = ralliement qui se remplit (1 min), arrivée de tous, puis marche aller et retour."))
 
         addCommonSettings(root, false)
 
@@ -446,6 +451,7 @@ class MainActivity : AppCompatActivity() {
         } else if (screen == 5) {
             e.putInt("huntMarches", huntN)
             e.putInt("hunt${huntN}Count", (huntCountEdit.text.toString().toIntOrNull() ?: 3).coerceIn(1, 99))
+            e.putInt("huntWait", (huntWaitEdit.text.toString().toIntOrNull() ?: 150).coerceIn(10, 1800))
         } else {
             e.putInt("farmMarches", farmN)
             e.putBoolean(farmKey("Grand"), grandCheck.isChecked)

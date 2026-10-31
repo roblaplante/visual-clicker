@@ -1299,7 +1299,8 @@ class BotService : Service() {
     private var huntFails = 0
     private var huntBackPending = false
     private var huntLevelClicks = 0
-    private var huntLastWait = 0L
+    private var huntNoFreeUntil = 0L // aucune marche libre : on ne revérifie qu'à cet instant
+    private var huntWaitMs = 150_000L // ralliement (1 min) + arrivées + marche aller-retour
     private var moreView: View? = null
 
     private fun loadHunt() {
@@ -1313,6 +1314,8 @@ class BotService : Service() {
         }
         val sp = getSharedPreferences("cfg", MODE_PRIVATE)
         huntTarget = sp.getInt("hunt${marchTotal}Count", 3).coerceIn(1, 99)
+        huntWaitMs = sp.getInt("huntWait", 150).coerceIn(10, 1800) * 1000L
+        huntNoFreeUntil = 0L
         huntDone = 0
         huntAsked = false
         huntSearchedAt = 0L
@@ -1321,11 +1324,11 @@ class BotService : Service() {
         log("hunt : $huntTarget chasse(s), $marchTotal marches")
     }
 
-    private fun huntWait(msg: String, now: Long) {
-        if (now - huntLastWait > 20_000) {
-            huntLastWait = now
-            log(msg)
-        }
+    /** Aucune marche libre : on attend avant de revérifier (le ralliement se remplit en 1 min, puis aller-retour). */
+    private fun huntWait(used: Int, now: Long) {
+        huntNoFreeUntil = now + huntWaitMs
+        huntStartedAt = 0L
+        log("hunt : marches $used/$marchTotal, aucune libre : nouvelle vérification dans ${huntWaitMs / 1000} s")
     }
 
     /**
@@ -1354,6 +1357,7 @@ class BotService : Service() {
             }
             return
         }
+        if (now < huntNoFreeUntil) return // attente en cours : aucune marche libre
         if (huntStartedAt == 0L) huntStartedAt = now
         if (now - huntStartedAt > 150_000) {
             huntFails++
@@ -1397,7 +1401,7 @@ class BotService : Service() {
         if (mk != null) {
             val used = usedMarches(screen)
             if (used >= marchTotal) {
-                huntWait("hunt : marches $used/$marchTotal, aucune libre : on attend", now)
+                huntWait(used, now)
                 return
             }
             if (farmMatch(screen, "rejoindre_auto", 0.8) == null) {
@@ -1431,7 +1435,7 @@ class BotService : Service() {
         if (ml != null) {
             val used = usedMarches(screen)
             if (used >= marchTotal) {
-                huntWait("hunt : marches $used/$marchTotal, aucune libre : on attend", now)
+                huntWait(used, now)
                 return
             }
             val (x, y) = farmCenter("loupe", ml)
