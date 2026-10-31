@@ -85,6 +85,11 @@ class BotService : Service() {
     private var minMeat = 20
     private var marchTotal = 5 // nombre total de marches (5 ou 6), réglé dans l'appli
     private var panelHeader: Mat? = null
+    private var popupTitle: Mat? = null // fenêtre « File de Marche » : plus aucune marche libre
+    private var popupX: Mat? = null
+    private var hexTpl: Mat? = null // pin hexagonal du boss (tête de roi) : à ne jamais attaquer
+    private var noMarchUntil = 0L
+    private var farmBackPending = false
     private var farmCap = 6 // récoltes que l'on peut encore lancer = marches libres
     private var lastPanel: Mat? = null // bande du panneau des marches, pleine résolution (mode farm)
     private var panelY0 = 0
@@ -167,6 +172,7 @@ class BotService : Service() {
 
         setupDisplay()
         loadPanelHeader()
+        loadExtras()
         if (mode == "farm") {
             loadFarm()
         } else {
@@ -266,6 +272,61 @@ class BotService : Service() {
             panelHeader = small
         } catch (_: Exception) {
         }
+    }
+
+    private fun loadAsset(path: String): Mat? {
+        return try {
+            val bmp = assets.open(path).use { BitmapFactory.decodeStream(it) } ?: return null
+            val rgba = Mat()
+            Utils.bitmapToMat(bmp, rgba)
+            bmp.recycle()
+            val gray = Mat()
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            rgba.release()
+            val f = SCALE * w / 1080.0
+            val small = Mat()
+            Imgproc.resize(gray, small, Size(), f, f, Imgproc.INTER_AREA)
+            gray.release()
+            small
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun loadExtras() {
+        popupTitle = loadAsset("file_marche_titre.png")
+        popupX = loadAsset("file_marche_x.png")
+        hexTpl = loadAsset("hexagone_boss.png")
+    }
+
+    /**
+     * Fenêtre « File de Marche » (plus de marche libre, proposition d'en débloquer) : on la ferme par sa croix et on
+     * retient qu'aucune marche n'est libre pendant un moment. Renvoie true si elle était affichée.
+     */
+    private fun handleNoMarchPopup(screen: Mat, now: Long): Boolean {
+        val t = popupTitle ?: return false
+        val mt = matchBest(screen, t) ?: return false
+        if (mt.maxVal < 0.8) return false
+        val xt = popupX
+        val mx = if (xt != null) matchBest(screen, xt) else null
+        val cx: Float
+        val cy: Float
+        if (xt != null && mx != null && mx.maxVal >= 0.8) {
+            cx = ((mx.maxLoc.x + xt.cols() / 2.0) / SCALE).toFloat()
+            cy = ((mx.maxLoc.y + xt.rows() / 2.0) / SCALE).toFloat()
+        } else {
+            cx = (0.89 * w).toFloat()
+            cy = ((mt.maxLoc.y + t.rows() / 2.0) / SCALE).toFloat()
+        }
+        noMarchUntil = now + 30_000
+        lastClick = now
+        ClickAccessibilityService.instance?.click(cx, cy)
+        log("fenêtre « File de Marche » : plus de marche libre, fermée")
+        return true
+    }
+
+    private fun backArrow() {
+        ClickAccessibilityService.instance?.click((0.069 * w).toFloat(), (0.13 * w).toFloat())
     }
 
     /**
@@ -469,6 +530,7 @@ class BotService : Service() {
         }
         val now = SystemClock.uptimeMillis()
         if (now - lastClick < cooldown) return
+        if (handleNoMarchPopup(screen, now)) return
         // 1) boutons du jeu (intégrés) et images ajoutées par l'utilisateur
         for ((i, t) in templates.withIndex()) {
             if (templateNames[i] == HARVEST) continue // cliqué seulement selon le nombre de coches vertes
@@ -480,6 +542,19 @@ class BotService : Service() {
                 if (off != null) {
                     cx += (off[0] * w / 1080.0).toFloat()
                     cy += (off[1] * w / 1080.0).toFloat()
+                }
+                if (noMarchUntil > now && templateNames[i] == "03_deployer.png") {
+                    // Plus de marche : on sort de l'écran de déploiement au lieu de redemander.
+                    lastClick = now
+                    backArrow()
+                    compassArmedAt = now
+                    log("plus de marche libre : retour depuis l'écran de déploiement")
+                    return
+                }
+                if (templateNames[i] == "04_attaquer.png" && noMarchUntil > now) {
+                    log("plus de marche libre : chasse ignorée, retour à la carte des pins")
+                    backToPins(screen, now)
+                    return
                 }
                 if (templateNames[i] == "04_attaquer.png") {
                     // « Attaquer » = chasse à tête de loup : elle exige une marche libre (tentes et épées croisées non).
@@ -556,7 +631,7 @@ class BotService : Service() {
             }
             return
         }
-        val pin = findPin(rgb)
+        val pin = findPin(rgb, screen)
         // Récolte : « Récupérer Tout » quand assez de pins ont leur coche verte (ou s'il n'y a plus rien à cliquer).
         if (harvestMin > 0 && statChecks >= 1 && (statChecks >= harvestMin || pin == null)) {
             val hi = templateNames.indexOf(HARVEST)
@@ -676,7 +751,7 @@ class BotService : Service() {
      * Cherche les pins (ours, épées, tente : même couleurs, même gabarit) et renvoie le plus haut.
      * Le pin hexagonal (tête de roi) est plus large et plus gros : écarté par les filtres de taille.
      */
-    private fun findPin(rgb: Mat): Pair<Float, Float>? {
+    private fun findPin(rgb: Mat, screen: Mat): Pair<Float, Float>? {
         val hsv = Mat()
         Imgproc.cvtColor(rgb, hsv, Imgproc.COLOR_RGB2HSV)
         val sw = rgb.cols().toDouble()
@@ -706,7 +781,18 @@ class BotService : Service() {
         var bestY = Double.MAX_VALUE
         statCand = 0; statDone = 0; statSeen = 0
         val visible = ArrayList<DoubleArray>()
-        for ((lo, hi) in pinRanges) {
+        // Pin hexagonal du boss (tête de roi) : retrouvé par son dessin ; tout bloc doré qui le contient est ignoré.
+        var hexX = -1.0
+        var hexY = -1.0
+        val ht = hexTpl
+        val hmm = if (ht != null) matchBest(screen, ht) else null
+        if (ht != null && hmm != null && hmm.maxVal >= 0.7) {
+            hexX = hmm.maxLoc.x + ht.cols() / 2.0
+            hexY = hmm.maxLoc.y + ht.rows() / 2.0
+        }
+        for ((ri, range) in pinRanges.withIndex()) {
+            val lo = range.first
+            val hi = range.second
             val mask = Mat()
             Core.inRange(hsv, lo, hi, mask)
             Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, k5)
@@ -722,11 +808,12 @@ class BotService : Service() {
                 val h = stats.get(i, Imgproc.CC_STAT_HEIGHT)[0]
                 val a = stats.get(i, Imgproc.CC_STAT_AREA)[0]
                 if (h < 0.11 * sw || h > 0.185 * sw) continue // le pin hexagonal (tête de roi) est bien plus haut
+                if (ri == 2 && hexX >= 0 && hexX >= x && hexX <= x + w && hexY >= y && hexY <= y + h) continue // c'est le boss
                 val pw = 0.099 * sw // largeur d'un pin
                 val subs = ArrayList<DoubleArray>() // (x gauche, largeur) de chaque pin du bloc
                 if (w >= 0.085 * sw && w <= 0.125 * sw && h / w >= 1.1 && h / w <= 1.8 && a <= 0.0105 * sw * sw) {
                     subs.add(doubleArrayOf(x, w))
-                } else if (w > 0.125 * sw && w <= 0.4 * sw) {
+                } else if (w > 0.125 * sw && w <= 0.4 * sw && h / w < 1.05) {
                     // Plusieurs pins de même couleur qui se touchent forment un seul bloc large : on le découpe,
                     // sauf si une coche verte s'y trouve (pin terminé : « Récupérer Tout » le fera disparaître).
                     val inside = checks.any {
@@ -950,6 +1037,20 @@ class BotService : Service() {
     private fun detectFarm(screen: Mat, rgb: Mat) {
         val now = SystemClock.uptimeMillis()
         if (now - lastClick < cooldown) return
+        if (farmBackPending) {
+            farmBackPending = false
+            lastClick = now
+            backArrow()
+            return
+        }
+        if (handleNoMarchPopup(screen, now)) {
+            // Aucune marche libre : on arrête les récoltes et on ressort de l'écran de déploiement.
+            farmIdx = farmTasks.size
+            farmFinished = false
+            farmBackPending = true
+            log("farm : plus de marche libre, on arrête")
+            return
+        }
         if (!planAdjusted && farmIdx == 0) {
             if (farmMatch(screen, "loupe", 0.85) != null || farmMatch(screen, "rechercher", 0.8) != null) {
                 val active = readActive(screen)
@@ -1306,6 +1407,9 @@ class BotService : Service() {
         lastRgb?.release()
         lastPanel?.release()
         panelHeader?.release()
+        popupTitle?.release()
+        popupX?.release()
+        hexTpl?.release()
         farm.values.forEach { it.release() }
         farm.clear()
         gates.forEach { it.release() }

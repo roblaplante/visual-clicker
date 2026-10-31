@@ -105,7 +105,7 @@ def find_pin(small_bgr):
             pw = 0.099 * sw  # largeur d'un pin
             if 0.085 * sw <= w <= 0.125 * sw and 1.1 <= h / w <= 1.8 and a <= 0.0105 * sw * sw:
                 subs = [(x, w)]
-            elif 0.125 * sw < w <= 0.4 * sw:
+            elif 0.125 * sw < w <= 0.4 * sw and h / w < 1.05:
                 # plusieurs pins de même couleur qui se touchent forment un seul bloc large : on le découpe,
                 # sauf si une coche verte est dans le bloc (pin terminé : on le laisse, « Récupérer Tout » le fera disparaître)
                 if any(x - 0.2 * pw <= kx <= x + w + 0.2 * pw and y - 0.1 * h <= ky <= y + 0.6 * h for kx, ky, _ in checks):
