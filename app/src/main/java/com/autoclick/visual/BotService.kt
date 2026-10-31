@@ -56,6 +56,7 @@ class BotService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.autoclick.visual.STOP"
+        private const val HARVEST = "08_recuperer_tout.png"
         private const val SCALE = 0.5 // on travaille en demi-résolution pour la vitesse
     }
 
@@ -81,6 +82,8 @@ class BotService : Service() {
     private var compassArmedAt = 0L // instant du dernier « Victoire » / « Secourir » (0 = rien à attendre)
     private var compassDelayMs = 3000L
     private var minMeat = 20
+    private var harvestMin = 5
+    private var statChecks = 0
     private var idleMs = 30_000L
     private var lastIdleLog = 0L
     private var statCand = 0
@@ -170,6 +173,7 @@ class BotService : Service() {
         interval = sp.getLong("interval", 500L).coerceAtLeast(100L)
         cooldown = sp.getLong("cooldown", 1000L).coerceAtLeast(0L)
         minMeat = sp.getInt("minMeat", 20)
+        harvestMin = sp.getInt("harvestMin", 5).coerceIn(0, 50)
         idleMs = sp.getInt("idleSec", 30).coerceIn(0, 3600) * 1000L
         pinMemoryMs = sp.getInt("pinMemory", 20).coerceIn(0, 600) * 60_000L
         compassDelayMs = sp.getInt("compassDelay", 3).coerceIn(0, 60) * 1000L
@@ -379,6 +383,7 @@ class BotService : Service() {
         if (now - lastClick < cooldown) return
         // 1) boutons du jeu (intégrés) et images ajoutées par l'utilisateur
         for ((i, t) in templates.withIndex()) {
+            if (templateNames[i] == HARVEST) continue // cliqué seulement selon le nombre de coches vertes
             val mm = matchBest(screen, t) ?: continue
             if (mm.maxVal >= threshold) {
                 var cx = ((mm.maxLoc.x + t.cols() / 2.0) / SCALE).toFloat()
@@ -455,6 +460,21 @@ class BotService : Service() {
             return
         }
         val pin = findPin(rgb)
+        // Récolte : « Récupérer Tout » quand assez de pins ont leur coche verte (ou s'il n'y a plus rien à cliquer).
+        if (harvestMin > 0 && statChecks >= 1 && (statChecks >= harvestMin || pin == null)) {
+            val hi = templateNames.indexOf(HARVEST)
+            val ht = if (hi >= 0) templates[hi] else null
+            val hm = if (ht != null) matchBest(screen, ht) else null
+            if (ht != null && hm != null && hm.maxVal >= threshold) {
+                val cx = ((hm.maxLoc.x + ht.cols() / 2.0) / SCALE).toFloat()
+                val cy = ((hm.maxLoc.y + ht.rows() / 2.0) / SCALE).toFloat()
+                lastClick = now
+                ClickAccessibilityService.instance?.click(cx, cy)
+                log("récolte : $statChecks coches vertes (seuil $harvestMin) : clic Récupérer Tout")
+                toast("Récupérer Tout ($statChecks pins)")
+                return
+            }
+        }
         if (pin == null) {
             if (now - lastIdleLog > 20_000) {
                 lastIdleLog = now
@@ -548,14 +568,17 @@ class BotService : Service() {
         val cn = Imgproc.connectedComponentsWithStats(checkMask, cLabels, cStats, cCents)
         val checks = ArrayList<DoubleArray>()
         for (j in 1 until cn) {
-            checks.add(
-                doubleArrayOf(
-                    cCents.get(j, 0)[0], cCents.get(j, 1)[0],
-                    cStats.get(j, Imgproc.CC_STAT_AREA)[0]
-                )
-            )
+            val cw = cStats.get(j, Imgproc.CC_STAT_WIDTH)[0]
+            val ch = cStats.get(j, Imgproc.CC_STAT_HEIGHT)[0]
+            val ca = cStats.get(j, Imgproc.CC_STAT_AREA)[0]
+            // Une coche : ~17x12 px (ratio 1,4, remplissage ~0,44). On écarte les liserés verts des boutons.
+            if (ch < 0.012 * sw || cw / ch < 1.0 || cw / ch > 1.8) continue
+            val fill = ca / (cw * ch)
+            if (fill < 0.3 || fill > 0.7) continue
+            checks.add(doubleArrayOf(cCents.get(j, 0)[0], cCents.get(j, 1)[0], ca))
         }
         checkMask.release(); cLabels.release(); cStats.release(); cCents.release()
+        statChecks = checks.size
         val k5 = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
         val k3 = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
         var bestX = 0.0

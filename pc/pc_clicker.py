@@ -36,6 +36,8 @@ CLICK_OFFSETS = {"01_victoire.png": (0, 1000), "09_recompenses.png": (0, 1000)}
 COMPASS_AFTER = {"01_victoire.png", "03_deployer.png", "07_secourir.png"}
 PINS_SEEN = []  # (x, y, instant) des pins déjà lancés
 PIN_MEMORY = 20 * 60.0
+HARVEST = "08_recuperer_tout.png"
+HARVEST_MIN = 5  # option --harvest-min : Récupérer Tout quand N pins ont une coche verte (0 = jamais)
 GATES = {"titre_mission_fr.png": 1080.0, "titre_mission_en.png": 540.0}
 
 
@@ -73,6 +75,9 @@ def best_match(screen, tpl):
     return (mx if np.isfinite(mx) else 0.0), loc
 
 
+FIND = {"checks": 0}
+
+
 def find_pin(small_bgr):
     """Pin le plus haut : blobs bleu/mauve/or, taille et proportions d'un pin.
     Le pin hexagonal (tête de roi) est plus large et plus gros : écarté."""
@@ -82,7 +87,12 @@ def find_pin(small_bgr):
     # pastilles « coche verte » = pin déjà fait : à éviter
     cm = cv2.inRange(hsv, (44, 110, 160), (58, 255, 255))
     nc, _, cst, ccen = cv2.connectedComponentsWithStats(cm)
-    checks = [(ccen[j][0], ccen[j][1], cst[j][4]) for j in range(1, nc)]
+    checks = []
+    for j in range(1, nc):
+        cw, ch, ca = int(cst[j][2]), int(cst[j][3]), int(cst[j][4])
+        # une coche : ~17x12 px (ratio 1,4, remplissage ~0,44) ; on écarte les liserés verts des boutons
+        if ch >= 0.012 * sw and 1.0 <= cw / ch <= 1.8 and 0.3 <= ca / (cw * ch) <= 0.7:
+            checks.append((ccen[j][0], ccen[j][1], ca))
     for lo, hi in PIN_RANGES:
         m = cv2.inRange(hsv, lo, hi)
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
@@ -103,6 +113,7 @@ def find_pin(small_bgr):
                 continue
             if best is None or cy < best[1]:
                 best = (cx, cy)
+    FIND["checks"] = len(checks)
     if best is None:
         return None
     return int(best[0] / SCALE), int(best[1] / SCALE)
@@ -135,6 +146,8 @@ def detect(img, templates, gates, threshold, compass=None, min_meat=0):
     gray = to_gray_small(img)
     sw = img.shape[1]
     for name, tpl in templates:
+        if name == HARVEST:
+            continue
         score, loc = best_match(gray, tpl)
         if score >= threshold:
             x = int((loc[0] + tpl.shape[1] / 2) / SCALE)
@@ -166,6 +179,13 @@ def detect(img, templates, gates, threshold, compass=None, min_meat=0):
     if on_pins:
         small = cv2.resize(img, None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_AREA)
         pin = find_pin(small)
+        n = FIND["checks"]
+        if HARVEST_MIN > 0 and n >= 1 and (n >= HARVEST_MIN or pin is None):
+            for name, tpl in templates:
+                if name == HARVEST:
+                    score, loc = best_match(gray, tpl)
+                    if score >= threshold:
+                        return f"{name} ({n} coches vertes)", int((loc[0] + tpl.shape[1] / 2) / SCALE), int((loc[1] + tpl.shape[0] / 2) / SCALE)
         if pin:
             if min_meat > 0:
                 meat = read_meat(img)
@@ -211,11 +231,13 @@ def main():
     ap.add_argument("--min-meat", type=int, default=20, help="viande minimum avant un pin (0 = pas de contrôle ; exige pytesseract)")
     ap.add_argument("--compass-delay", type=float, default=3.0, help="secondes d'attente avant la boussole")
     ap.add_argument("--idle", type=float, default=30.0, help="secondes d'inactivité avant de rouvrir la carte des pins (0 = non)")
+    ap.add_argument("--harvest-min", type=int, default=5, help="Récupérer Tout quand N pins ont une coche verte (0 = jamais)")
     ap.add_argument("--image", default=None, help="test à blanc sur une capture (aucun clic)")
     a = ap.parse_args()
     global COMPASS_DELAY
     COMPASS_DELAY = a.compass_delay
-    global IDLE_SECONDS
+    global IDLE_SECONDS, HARVEST_MIN
+    HARVEST_MIN = a.harvest_min
     IDLE_SECONDS = a.idle
 
     templates = load_templates(a.templates)

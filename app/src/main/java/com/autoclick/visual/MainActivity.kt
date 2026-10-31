@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var compassEdit: EditText
     private lateinit var memEdit: EditText
     private lateinit var idleEdit: EditText
+    private lateinit var harvestEdit: EditText
 
     private val sp by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
     private val dir by lazy { File(filesDir, "templates").apply { mkdirs() } }
@@ -150,6 +151,13 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(idleEdit)
 
+        root.addView(label("Récupérer Tout quand ce nombre de pins ont une coche verte (0 = jamais, 1 = dès le premier)"))
+        harvestEdit = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(sp.getInt("harvestMin", 5).toString())
+        }
+        root.addView(harvestEdit)
+
         root.addView(button("4. Démarrer") { start() })
         root.addView(button("Voir le journal des actions") { showLog() })
         root.addView(button("Effacer le journal") { File(filesDir, "journal.txt").delete() })
@@ -188,7 +196,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages sont gardés en mémoire à chaque sortie de l'écran et au démarrage. */
     private fun saveSettings() {
-        if (!::idleEdit.isInitialized) return
+        if (!::harvestEdit.isInitialized) return
         sp.edit()
             .putInt("threshold", 55 + thresholdBar.progress)
             .putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
@@ -197,6 +205,7 @@ class MainActivity : AppCompatActivity() {
             .putInt("compassDelay", compassEdit.text.toString().toIntOrNull() ?: 3)
             .putInt("pinMemory", memEdit.text.toString().toIntOrNull() ?: 20)
             .putInt("idleSec", idleEdit.text.toString().toIntOrNull() ?: 30)
+            .putInt("harvestMin", harvestEdit.text.toString().toIntOrNull() ?: 5)
             .apply()
     }
 
