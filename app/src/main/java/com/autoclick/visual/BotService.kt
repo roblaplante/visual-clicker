@@ -86,6 +86,7 @@ class BotService : Service() {
     private var lastPanel: Mat? = null // bande du panneau des marches, pleine résolution (mode farm)
     private var panelY0 = 0
     private var grandRunning = false
+    private var grandType: String? = null // ressource du grand bâtiment (PAIN / BOIS / PIERRE / FER)
     private var harvestMin = 5
     private var statChecks = 0
     private var idleMs = 30_000L
@@ -526,10 +527,13 @@ class BotService : Service() {
     private fun readMeat(meat: Mat): Int? = ocrDigits(meat).toIntOrNull() // « 2 873 » -> 2873
 
     /** Lit les chiffres d'une zone de texte blanc sur fond sombre (ML Kit) ; chaîne vide si illisible. */
-    private fun ocrDigits(src: Mat): String {
+    private fun ocrDigits(src: Mat): String = ocrText(src).filter { it.isDigit() }
+
+    /** Lit un texte blanc sur fond sombre (ML Kit) ; chaîne vide si illisible. */
+    private fun ocrText(src: Mat): String {
         return try {
             val gray = Mat()
-            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY)
+            Imgproc.cvtColor(src, gray, if (src.channels() == 4) Imgproc.COLOR_RGBA2GRAY else Imgproc.COLOR_RGB2GRAY)
             val big = Mat()
             Imgproc.resize(gray, big, Size(), 4.0, 4.0, Imgproc.INTER_CUBIC)
             val bin = Mat()
@@ -541,7 +545,7 @@ class BotService : Service() {
             gray.release(); big.release(); bin.release(); padded.release()
             val text = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 5, TimeUnit.SECONDS).text
             bmp.recycle()
-            text.filter { it.isDigit() }
+            text
         } catch (_: Exception) {
             ""
         }
@@ -735,13 +739,14 @@ class BotService : Service() {
     /** Plan de récolte = ce qu'on veut, moins ce que le panneau des marches montre déjà en cours. */
     private fun buildPlan(active: Map<String, Int>?) {
         farmTasks.clear()
-        if (active == null) grandRunning = false
+        if (active == null) { grandRunning = false; grandType = null }
         if (farmGrand && !grandRunning) farmTasks.add("GRAND")
         for (k in farmKinds) {
-            val need = (farmTarget[k] ?: 0) - (active?.get(k) ?: 0)
+            // Un grand déjà en cours couvre une récolte de son type : pas besoin d'une petite en plus.
+            val need = (farmTarget[k] ?: 0) - (active?.get(k) ?: 0) - (if (grandRunning && grandType == k) 1 else 0)
             repeat(need.coerceIn(0, 6)) { farmTasks.add(k) }
         }
-        while (farmTasks.size > 6) farmTasks.removeAt(farmTasks.size - 1)
+        if (!farmGrand || grandRunning) capPlan()
         farmIdx = 0
         tileClickedIdx = -1
         searchedAt = 0L
@@ -774,6 +779,7 @@ class BotService : Service() {
         val headerY = (header.maxLoc.y + ht.rows() / 2.0) / SCALE
         val counts = HashMap<String, Int>()
         grandRunning = false
+        grandType = null
         for (i in 0 until 6) {
             val cy = (headerY + (82 + i * 91) * s) * SCALE // centre de la ligne, en demi-résolution
             val bx = (10 * s * SCALE).toInt()
@@ -800,7 +806,8 @@ class BotService : Service() {
             val secs = readRowSeconds(headerY + (82 + i * 91) * s, s)
             if (secs != null && secs > 7 * 3600) {
                 grandRunning = true
-                log("farm : ligne ${i + 1} : ${secs / 3600}h${(secs % 3600) / 60}min restantes, c'est le grand")
+                if (bs >= 0.65 && bs - second >= 0.12) grandType = best // l'icône du grand porte un badge : reconnaissance plus souple
+                log("farm : ligne ${i + 1} : ${secs / 3600}h${(secs % 3600) / 60}min restantes, c'est le grand ($grandType)")
             } else if (classified) {
                 counts[best] = (counts[best] ?: 0) + 1
             }
@@ -828,7 +835,13 @@ class BotService : Service() {
         log(msg)
     }
 
+    /** 6 marches au maximum (le grand compte pour une récolte de son type : on plafonne après l'avoir su). */
+    private fun capPlan() {
+        while (farmTasks.size > 6) farmTasks.removeAt(farmTasks.size - 1)
+    }
+
     private fun nextFarmTask() {
+        capPlan()
         log("farm : tâche ${farmIdx + 1}/${farmTasks.size} terminée")
         farmIdx++
         tileClickedIdx = -1
@@ -886,6 +899,7 @@ class BotService : Service() {
         if (task == "GRAND") {
             val ms = farmMatch(screen, "squad_collecte")
             if (ms != null) {
+                if (grandType == null) readGrandType(rgb)?.let { applyGrandType(it) }
                 val t = farm["squad_collecte"]!!
                 val roi = Mat(rgb, Rect(ms.maxLoc.x.toInt(), ms.maxLoc.y.toInt(), t.cols(), t.rows()))
                 val hsv = Mat()
@@ -1002,6 +1016,37 @@ class BotService : Service() {
     }
 
     /** Fait glisser la liste de [shift] px (positif = vers la droite) puis laisse le temps à l'animation. */
+    /** Nom du bâtiment en haut de l'écran de l'escouade : Scierie = bois, Moulin = pain, Carrière = pierre, Mine = fer. */
+    private fun readGrandType(rgb: Mat): String? {
+        val sc = rgb.cols() / 1080.0
+        val x0 = (125 * sc).toInt()
+        val x1 = minOf((720 * sc).toInt(), rgb.cols())
+        val y0 = (100 * sc).toInt()
+        val y1 = minOf((190 * sc).toInt(), rgb.rows())
+        if (x1 <= x0 || y1 <= y0) return null
+        val t = ocrText(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))).lowercase()
+        return when {
+            "scier" in t -> "BOIS"
+            "moul" in t -> "PAIN"
+            "carri" in t -> "PIERRE"
+            "mine" in t || t.trim().endsWith("fer") -> "FER"
+            else -> null
+        }
+    }
+
+    /** Le grand couvre une récolte de son type : on retire une petite de ce type du reste du plan. */
+    private fun applyGrandType(type: String) {
+        grandType = type
+        val idx = (farmIdx + 1 until farmTasks.size).firstOrNull { farmTasks[it] == type }
+        if (idx != null) {
+            farmTasks.removeAt(idx)
+            log("farm : le grand récolte du $type : une petite récolte de moins")
+        } else {
+            log("farm : le grand récolte du $type")
+        }
+        capPlan()
+    }
+
     private fun swipeRow(y: Double, shift: Double, now: Long) {
         val x1 = (0.5 * w - shift / 2).toFloat()
         val x2 = (0.5 * w + shift / 2).toFloat()

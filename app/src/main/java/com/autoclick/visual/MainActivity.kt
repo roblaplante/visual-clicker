@@ -303,9 +303,10 @@ class MainActivity : AppCompatActivity() {
         val total = (if (grandCheck.isChecked) 1 else 0) +
             farmCount(painEdit) + farmCount(boisEdit) + farmCount(pierreEdit) + farmCount(ferEdit)
         farmTotal.text = if (total > 6) {
-            "Total : $total récoltes. Maximum 6 : les dernières seront ignorées."
+            "Total : $total. Le grand couvre une récolte de son type (Scierie = bois, Moulin = pain, " +
+                "Carrière = pierre, Mine = fer) : une petite de ce type en moins. 6 marches au maximum."
         } else {
-            "Total : $total récolte(s) sur 6 marches."
+            "Total : $total récolte(s) sur 6 marches (le grand couvre une récolte de son type)."
         }
     }
 
