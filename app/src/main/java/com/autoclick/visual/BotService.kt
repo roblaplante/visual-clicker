@@ -2171,7 +2171,7 @@ class BotService : Service() {
         if ("conqu" in bottom || "conqu" in ocrRef(rgb, 130, 90, 760, 200)) {
             dailyIdleAt = now
             dailyStep = maxOf(dailyStep, 10)
-            if (dailyStep < 20 && colorFrac(rgb, 925.0, 1800.0, green, greenHi, 14) >= 0.2 && dailyBtn < 4) {
+            if (dailyStep < 20 && colorRect(rgb, 825, 1768, 1030, 1838, green, greenHi) >= 0.08 && dailyBtn < 4) {
                 dailyBtn++
                 clickRef(925.0, 1800.0, "daily : Conquête : Récupérer")
             } else {
@@ -2327,6 +2327,23 @@ class BotService : Service() {
         }
         res.release()
         return out
+    }
+
+    /** Part de pixels d'une couleur HSV dans un rectangle (coordonnées de référence 1080 px). */
+    private fun colorRect(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int, lo: Scalar, hi: Scalar): Double {
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bx = minOf((x1 * sc).toInt(), rgb.cols())
+        val by = minOf((y1 * sc).toInt(), rgb.rows())
+        if (bx <= ax || by <= ay) return 0.0
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(ax, ay, bx - ax, by - ay)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, lo, hi, m)
+        val f = Core.countNonZero(m).toDouble() / (m.rows() * m.cols())
+        hsv.release(); m.release()
+        return f
     }
 
     /** Part de pixels d'une couleur HSV autour d'un point de référence. */
