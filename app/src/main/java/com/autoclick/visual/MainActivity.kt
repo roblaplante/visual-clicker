@@ -532,6 +532,12 @@ class MainActivity : AppCompatActivity() {
             return
         }
         saveSettings()
+        if (BotService.alive) {
+            // La capture est déjà autorisée : on change de mode sans nouvelle demande.
+            startService(Intent(this, BotService::class.java).putExtra("mode", mode))
+            moveTaskToBack(true)
+            return
+        }
         pendingMode = mode
         val mpm = getSystemService(MediaProjectionManager::class.java)
         capture.launch(mpm.createScreenCaptureIntent())

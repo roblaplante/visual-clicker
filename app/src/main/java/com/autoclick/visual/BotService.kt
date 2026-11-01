@@ -61,6 +61,10 @@ class BotService : Service() {
         const val ACTION_STOP = "com.autoclick.visual.STOP"
         private const val HARVEST = "08_recuperer_tout.png"
         private const val SCALE = 0.5 // on travaille en demi-résolution pour la vitesse
+
+        /** Vrai tant que la capture d'écran est autorisée et active : un nouveau mode peut s'en servir sans nouvelle demande. */
+        @Volatile
+        var alive = false
     }
 
     private lateinit var wm: WindowManager
@@ -137,7 +141,11 @@ class BotService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (projection != null) return START_NOT_STICKY
+        if (projection != null) {
+            // Capture déjà autorisée : on change simplement de mode, sans nouvelle autorisation.
+            intent?.getStringExtra("mode")?.let { newMode -> main.post { switchMode(newMode) } }
+            return START_NOT_STICKY
+        }
 
         ServiceCompat.startForeground(
             this, 1, buildNotification(),
@@ -191,7 +199,57 @@ class BotService : Service() {
         addOverlay()
         addMenuButton()
         handler.post(tick)
+        alive = true
         return START_NOT_STICKY
+    }
+
+    /** Change de mode sur la capture existante : on libère les modèles de l'ancien mode et on charge ceux du nouveau. */
+    private fun switchMode(newMode: String) {
+        running = false
+        handler.post {
+            try {
+                mode = newMode
+                templates.forEach { it.release() }
+                templates.clear()
+                templateNames.clear()
+                farm.values.forEach { it.release() }
+                farm.clear()
+                gates.forEach { it.release() }
+                gates.clear()
+                compass?.release()
+                compass = null
+                pinsSeen.clear()
+                compassArmedAt = 0L
+                noMarchUntil = 0L
+                farmBackPending = false
+                loadConfig()
+                log("changement de mode ($mode) sans nouvelle autorisation de capture")
+                when (mode) {
+                    "farm" -> loadFarm()
+                    "hunt" -> loadHunt()
+                    "daily" -> loadDaily()
+                    else -> {
+                        loadTemplates()
+                        loadGate()
+                        loadCompass()
+                    }
+                }
+            } catch (e: Exception) {
+                log("changement de mode : erreur ${e.message}")
+            }
+            main.post { showOverlays(true) }
+        }
+    }
+
+    /** Affiche ou cache les boutons flottants (cachés pendant qu'on est dans le menu de l'appli). */
+    private fun showOverlays(visible: Boolean) {
+        val v = if (visible) View.VISIBLE else View.GONE
+        overlay?.let {
+            it.visibility = v
+            it.text = "▶"
+            (it.background as GradientDrawable).setColor(0xCC2E7D32.toInt())
+        }
+        menuBtn?.visibility = v
     }
 
     // ---------- Config & modèles ----------
@@ -2636,12 +2694,15 @@ class BotService : Service() {
         menuBtn = tv
     }
 
+    /** Retour au menu : on met en pause et on cache les boutons, mais la capture reste autorisée (pas de nouvelle demande). */
     private fun openMenu() {
+        running = false
+        removeMorePanel()
+        showOverlays(false)
         startActivity(
             Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         )
-        stopSelf()
     }
 
     private fun toggle(tv: TextView) {
@@ -2686,6 +2747,7 @@ class BotService : Service() {
     }
 
     override fun onDestroy() {
+        alive = false
         running = false
         thread?.let {
             handler.removeCallbacksAndMessages(null)
