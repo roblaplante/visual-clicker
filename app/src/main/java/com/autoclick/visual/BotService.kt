@@ -2148,8 +2148,10 @@ class BotService : Service() {
 
 
     /**
-     * Fontaine Vitale : on arrive sur « Mon île » ; on touche chaque goutte d'eau (fond blanc et vert, ou tout vert :
-     * on vise la goutte bleue) tant qu'il y en a, puis flèche bleue en haut à gauche.
+     * Fontaine Vitale : sur « Mon île », on touche chaque goutte d'eau (la plus basse d'abord) ; puis « Conquête » en bas
+     * à gauche > « Récupérer » (bouton vert, s'il est actif) > fenêtre « Revenu d'Inactivité » > « Récupérer » > bandeau
+     * « Récompenses » > bouton grisé : flèche bleue pour sortir (de Conquête, puis de l'île).
+     * dailyStep : 1 = gouttes, 10 = Conquête ouverte, 20 = on sort.
      */
     private fun detectFontaine(screen: Mat, rgb: Mat, now: Long) {
         if (now - dailyIdleAt > 10_000L) {
@@ -2160,57 +2162,63 @@ class BotService : Service() {
             dailyTries = 0
             return
         }
+        val green = Scalar(55.0, 100.0, 120.0)
+        val greenHi = Scalar(85.0, 255.0, 255.0)
+        // écran « Récompenses » (après Récupérer) : bandeau jaune
+        val bottom = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in bottom || "quitter" in bottom) {
+            dailyIdleAt = now
+            clickRef(540.0, 730.0, "daily : Fontaine Vitale : récompenses (bandeau jaune)")
+            return
+        }
+        // fenêtre « Revenu d'Inactivité » : bouton vert Récupérer
+        if (colorFrac(rgb, 540.0, 1635.0, green, greenHi) >= 0.25) {
+            dailyIdleAt = now
+            dailyStep = maxOf(dailyStep, 10)
+            clickRef(540.0, 1635.0, "daily : Fontaine Vitale : Revenu d'Inactivité : Récupérer")
+            return
+        }
+        // écran « Conquête » (bouton « Conquérir » en bas)
+        if ("conqu" in bottom || "conqu" in ocrRef(rgb, 130, 90, 760, 200)) {
+            dailyIdleAt = now
+            dailyStep = maxOf(dailyStep, 10)
+            if (dailyStep < 20 && colorFrac(rgb, 925.0, 1800.0, green, greenHi, 14) >= 0.2 && dailyBtn < 4) {
+                dailyBtn++
+                clickRef(925.0, 1800.0, "daily : Fontaine Vitale : Conquête : Récupérer")
+            } else {
+                dailyStep = 20
+                lastClick = now
+                backArrow()
+                log("daily : Fontaine Vitale : Récupérer grisé, flèche retour de Conquête")
+            }
+            return
+        }
+        // île « Mon île » : gouttes, puis Conquête, ou sortie
         val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
         val labels = listOf("conqu", "héros", "heros", "magasin", "alliance").count { it in bar }
-        // toutes les gouttes visibles : on vise la plus basse d'abord (cela enlève la main sur celle du haut)
         val drops = findAllCenters(screen, "goutte", 0.75)
         val drop = drops.maxByOrNull { it.second }
-        val island = drop != null || (labels >= 2 && "ville" in bar && "monde" !in bar) // sur l'île, le bouton du bas dit « Ville »
+        val island = drop != null || (labels >= 2 && "ville" in bar && "monde" !in bar)
         if (island) {
             dailyIdleAt = now
-            if (drop != null && dailyBtn < 12) {
+            if (dailyStep >= 20) { // retour de Conquête : on sort aussi de l'île
+                lastClick = now
+                backArrow()
+                dailyTaskDone("Fontaine Vitale")
+            } else if (drop != null && dailyBtn < 12 && dailyStep < 10) {
                 dailyBtn++
                 dailyGrey = 0
                 dailyStep = 1
                 farmClick(drop.first, drop.second, "daily : Fontaine Vitale : clic sur une goutte d'eau ($dailyBtn sur ${drops.size} vue(s))")
-            } else if (++dailyGrey >= 2 && (dailyStep >= 1 || now - dailyStepAt > 5_000L)) {
-                lastClick = now
-                backArrow()
-                dailyTaskDone("Fontaine Vitale")
+            } else if (++dailyGrey >= 2 && dailyStep < 10 && (dailyStep >= 1 || now - dailyStepAt > 5_000L)) {
+                dailyStep = 10
+                dailyBtn = 0
+                clickRef(108.0, 2290.0, "daily : Fontaine Vitale : plus de goutte, clic sur Conquête")
             }
             return
         }
         if (labels >= 2 && "monde" in bar && dailyStep >= 1) dailyTaskDone("Fontaine Vitale")
     }
-
-    /** Centres (pleine résolution) de toutes les correspondances d'une image, au-dessus du seuil. */
-    private fun findAllCenters(screen: Mat, name: String, thr: Double): List<Pair<Float, Float>> {
-        val t = farm[name] ?: return emptyList()
-        if (t.cols() > screen.cols() || t.rows() > screen.rows()) return emptyList()
-        val res = Mat()
-        Imgproc.matchTemplate(screen, t, res, Imgproc.TM_CCOEFF_NORMED)
-        val out = ArrayList<Pair<Float, Float>>()
-        repeat(6) {
-            val mm = Core.minMaxLoc(res)
-            if (mm.maxVal < thr) return@repeat
-            out.add(
-                Pair(
-                    ((mm.maxLoc.x + t.cols() / 2.0) / SCALE).toFloat(),
-                    ((mm.maxLoc.y + t.rows() / 2.0) / SCALE).toFloat()
-                )
-            )
-            // on efface le voisinage pour trouver la correspondance suivante
-            Imgproc.rectangle(
-                res,
-                org.opencv.core.Point(mm.maxLoc.x - t.cols(), mm.maxLoc.y - t.rows()),
-                org.opencv.core.Point(mm.maxLoc.x + t.cols(), mm.maxLoc.y + t.rows()),
-                Scalar(-1.0), -1
-            )
-        }
-        res.release()
-        return out
-    }
-
 
     /**
      * Combat (Assaut Rebelle) : icône du golem en haut à gauche > fenêtre « Défi Rapide » > écran « Victoire ! »
