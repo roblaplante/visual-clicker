@@ -1689,6 +1689,17 @@ class BotService : Service() {
             }
         }
 
+        // Filet de sécurité : un écran « Récompenses » resté ouvert alors qu'aucune tâche n'est en cours (tâche abandonnée,
+        // récompense arrivée en retard) : on appuie n'importe où pour le fermer avant de rouvrir le menu.
+        if (dailyState == "OPEN" || dailyState == "LIST") {
+            val rw = ocrRef(rgb, 200, 2150, 880, 2240)
+            if ("appuie" in rw || "quitter" in rw) {
+                dailyIdleAt = now
+                clickRef(540.0, 1700.0, "daily : écran Récompenses resté ouvert : appui n'importe où")
+                return
+            }
+        }
+
         when (dailyState) {
             "OPEN" -> {
                 if (++dailyTries > 20) { dailyFinish("menu de gauche introuvable"); return }
