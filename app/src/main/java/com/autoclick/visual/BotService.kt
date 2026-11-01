@@ -1685,6 +1685,7 @@ class BotService : Service() {
                     // « Aventure Animalière » apparaît deux fois (titre de section puis tâche) : on prend la plus basse
                     if ("aventure" in t && "animal" in t) aventureCy = maxOf(aventureCy, l.cy)
                     if ("provisions" in t) cands.add(Pair(l.cy, "provisions"))
+                    if ("avanc" in t) cands.add(Pair(l.cy, "recrute")) // Recruter des Héros : Avancé
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
                     if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
                 }
@@ -1693,13 +1694,14 @@ class BotService : Service() {
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
                 for ((cy, key) in cands) {
-                    if ((dailyAttempts[key] ?: 0) >= 2) continue
+                    if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 4 else 2)) continue // 3 recrutements gratuits par jour
                     val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence
                     dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
                     dailyState = key.uppercase()
                     dailyStep = 0
                     dailyBtn = 0
                     dailyGrey = 0
+                    dailyTries = 0
                     dailyActAt = 0L
                     dailyIdleAt = now
                     dailyStepAt = now
@@ -1733,6 +1735,7 @@ class BotService : Service() {
             "PROVISIONS" -> detectProvisions(rgb, now)
             "CONTRIB" -> detectContrib(rgb, now)
             "ORDRES" -> detectOrdres(rgb, now)
+            "RECRUTE" -> detectRecrute(rgb, now)
         }
     }
 
@@ -1957,6 +1960,63 @@ class BotService : Service() {
                 dailyActAt = now
                 clickRef(995.0, 1855.0, "daily : Ordres : ouverture des ordres")
             }
+        }
+    }
+
+
+    /**
+     * Recruter des Héros : Avancé : écran du recrutement > « Recruter une fois Gratuit » (bouton vert) > parfois
+     * une animation (on touche en haut de l'écran) > écran « Récompenses » : flèche bleue > si un recrutement
+     * gratuit reste (bouton vert), on recommence, sinon flèche bleue pour revenir à la ville.
+     */
+    private fun detectRecrute(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Recrutement avancé abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // écran « Récompenses » du recrutement : flèche bleue en haut à gauche
+        val reward = ocrRef(rgb, 200, 1950, 880, 2250)
+        if ("appuie" in reward || "quitter" in reward) {
+            dailyIdleAt = now
+            dailyStep = 2
+            lastClick = now
+            backArrow()
+            log("daily : Recrutement : récompenses vues, flèche retour")
+            return
+        }
+        // écran du recrutement (ligne « Prochain gratuit » de l'Épique, toujours présente)
+        val recruit = ocrRef(rgb, 40, 2110, 560, 2165, true)
+        if ("prochain" in recruit || "gratuit" in recruit) {
+            dailyIdleAt = now
+            if (colorFrac(rgb, 287.0, 1690.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.3 && dailyBtn < 4) {
+                dailyBtn++
+                dailyStep = 1
+                clickRef(287.0, 1690.0, "daily : Recrutement avancé : clic Recruter une fois (gratuit) n°$dailyBtn")
+            } else {
+                dailyStep = 3
+                lastClick = now
+                backArrow()
+                log("daily : Recrutement : plus de recrutement gratuit, retour")
+            }
+            return
+        }
+        // ville : terminé
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val seen = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar }
+        if (seen >= 2) {
+            dailyIdleAt = now
+            if (dailyStep >= 1) dailyTaskDone("Recruter des Héros : Avancé")
+            return
+        }
+        // autre écran après un recrutement : animation du héros, on touche en haut de l'écran
+        if (dailyStep >= 1 && dailyTries < 12) {
+            dailyTries++
+            dailyIdleAt = now
+            clickRef(260.0, 300.0, "daily : Recrutement : animation, clic en haut de l'écran")
         }
     }
 
