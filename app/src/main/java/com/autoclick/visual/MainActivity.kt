@@ -388,24 +388,6 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Daily (onglet « Quot. » du menu de gauche) ----------
 
-    /** Repères : tâches de l'onglet « Quot. », de haut en bas, telles qu'elles apparaissent dans la liste. */
-    private val dailyTasks = listOf(
-        "Mes Récompenses : Récomp. En Ligne",
-        "Mes Récompenses : Banquet Gastronomique",
-        "Voyage : Voyage dans le royaume",
-        "Conquérir : Revenu d'inactivité",
-        "Collecte d'Essence d'Eau : Fontaine Vitale",
-        "Aventure Animalière",
-        "Épreuve Mystique : Flèche Éclatante",
-        "Creuseur en or véritable",
-        "Recruter des Héros : Avancé",
-        "Recruter des Héros : Épique",
-        "Contrib. d'All.",
-        "Observatoire : Renseignements",
-        "L'Arène",
-        "Triomphe d'Alliance : activité quotidienne"
-    )
-
     private fun showDaily() {
         screen = 7
         val root = newRoot()
@@ -413,24 +395,16 @@ class MainActivity : AppCompatActivity() {
         root.addView(TextView(this).apply { text = "Daily"; textSize = 22f })
         root.addView(
             label(
-                "Principe : l'appli ouvre le menu de gauche (petite languette à triangle blanc), touche l'onglet " +
-                    "« Quot. », puis prend les tâches de la liste du haut vers le bas, une par une. Si une tâche est " +
-                    "présente, elle lance son scénario. Les scénarios arrivent tâche après tâche (en cours de préparation)."
+                "Principe : l'appli ouvre le menu de gauche (petite languette à triangle blanc) et touche l'onglet " +
+                    "« Quot. ». Elle lit la liste des tâches telle qu'elle est à ce moment-là, prend la première " +
+                    "tâche à faire (du haut vers le bas) et lance son scénario. À la fin, elle revient à la liste, " +
+                    "regarde quelle est la suivante, et continue jusqu'à épuisement."
             )
         )
-        root.addView(label("Tâches repérées (cochez celles à faire ; l'ordre est celui de la liste du jeu) :"))
-        dailyTasks.forEachIndexed { i, name ->
-            val n = i + 1
-            root.addView(CheckBox(this).apply {
-                text = "$n. $name"
-                isChecked = sp.getBoolean("dailyTask$n", true)
-                setOnCheckedChangeListener { _, c -> sp.edit().putBoolean("dailyTask$n", c).apply() }
-            })
-        }
         root.addView(
             label(
-                "Les tâches terminées disparaissent de la liste (option « Masquer une fois la mission terminée »). " +
-                    "Le bouton Démarrer sera ajouté avec les premiers scénarios."
+                "Les tâches sans scénario sont ignorées ; certaines auront plus tard un sous-menu à activer à la demande. " +
+                    "Les scénarios arrivent tâche après tâche (en préparation) : le bouton Démarrer sera ajouté avec les premiers."
             )
         )
     }
