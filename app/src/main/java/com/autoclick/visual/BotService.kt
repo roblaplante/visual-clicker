@@ -1765,6 +1765,7 @@ class BotService : Service() {
                     if ("provisions" in t) cands.add(Pair(l.cy, "provisions"))
                     if ("avanc" in t) cands.add(Pair(l.cy, "recrute")) // Recruter des Héros : Avancé
                     if ("fontaine" in t) cands.add(Pair(l.cy, "fontaine")) // Collecte d'Essence d'Eau : Fontaine Vitale
+                    if ("inactiv" in t) cands.add(Pair(l.cy, "conquete")) // Conquérir : Revenu d'inactivité
                     if ("triomphe" in t && "activit" in t) cands.add(Pair(l.cy, "triomphe")) // Triomphe d'activité quotidienne
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
                     if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
@@ -1819,6 +1820,7 @@ class BotService : Service() {
             "TRIOMPHE" -> detectTriomphe(rgb, now)
             "FONTAINE" -> detectFontaine(screen, rgb, now)
             "COMBAT" -> detectCombat(screen, rgb, now)
+            "CONQUETE" -> detectConquete(rgb, now)
         }
     }
 
@@ -2148,6 +2150,60 @@ class BotService : Service() {
 
 
     /**
+     * Écrans de « Conquête » : récompenses (bandeau jaune), fenêtre « Revenu d'Inactivité » (Récupérer), écran Conquête
+     * (Récupérer vert, ou flèche bleue s'il est grisé). Renvoie true si l'écran courant en fait partie.
+     */
+    private fun conqueteScreens(rgb: Mat, now: Long): Boolean {
+        val green = Scalar(55.0, 100.0, 120.0)
+        val greenHi = Scalar(85.0, 255.0, 255.0)
+        val bottom = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in bottom || "quitter" in bottom) {
+            dailyIdleAt = now
+            clickRef(540.0, 730.0, "daily : Conquête : récompenses (bandeau jaune)")
+            return true
+        }
+        if (colorFrac(rgb, 540.0, 1635.0, green, greenHi) >= 0.25) {
+            dailyIdleAt = now
+            dailyStep = maxOf(dailyStep, 10)
+            clickRef(540.0, 1635.0, "daily : Conquête : Revenu d'Inactivité : Récupérer")
+            return true
+        }
+        if ("conqu" in bottom || "conqu" in ocrRef(rgb, 130, 90, 760, 200)) {
+            dailyIdleAt = now
+            dailyStep = maxOf(dailyStep, 10)
+            if (dailyStep < 20 && colorFrac(rgb, 925.0, 1800.0, green, greenHi, 14) >= 0.2 && dailyBtn < 4) {
+                dailyBtn++
+                clickRef(925.0, 1800.0, "daily : Conquête : Récupérer")
+            } else {
+                dailyStep = 20
+                lastClick = now
+                backArrow()
+                log("daily : Conquête : Récupérer grisé, flèche retour")
+            }
+            return true
+        }
+        return false
+    }
+
+    /** Tâche « Conquérir : Revenu d'inactivité » depuis la liste : même parcours que dans la collecte d'eau. */
+    private fun detectConquete(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Conquête abandonnée (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        if (conqueteScreens(rgb, now)) return
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        if (listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar } >= 2) {
+            dailyIdleAt = now
+            if (dailyStep >= 20) dailyTaskDone("Conquérir : Revenu d'inactivité")
+        }
+    }
+
+    /**
      * Fontaine Vitale : sur « Mon île », on touche chaque goutte d'eau (la plus basse d'abord) ; puis « Conquête » en bas
      * à gauche > « Récupérer » (bouton vert, s'il est actif) > fenêtre « Revenu d'Inactivité » > « Récupérer » > bandeau
      * « Récompenses » > bouton grisé : flèche bleue pour sortir (de Conquête, puis de l'île).
@@ -2162,37 +2218,7 @@ class BotService : Service() {
             dailyTries = 0
             return
         }
-        val green = Scalar(55.0, 100.0, 120.0)
-        val greenHi = Scalar(85.0, 255.0, 255.0)
-        // écran « Récompenses » (après Récupérer) : bandeau jaune
-        val bottom = ocrRef(rgb, 200, 2150, 880, 2240)
-        if ("appuie" in bottom || "quitter" in bottom) {
-            dailyIdleAt = now
-            clickRef(540.0, 730.0, "daily : Fontaine Vitale : récompenses (bandeau jaune)")
-            return
-        }
-        // fenêtre « Revenu d'Inactivité » : bouton vert Récupérer
-        if (colorFrac(rgb, 540.0, 1635.0, green, greenHi) >= 0.25) {
-            dailyIdleAt = now
-            dailyStep = maxOf(dailyStep, 10)
-            clickRef(540.0, 1635.0, "daily : Fontaine Vitale : Revenu d'Inactivité : Récupérer")
-            return
-        }
-        // écran « Conquête » (bouton « Conquérir » en bas)
-        if ("conqu" in bottom || "conqu" in ocrRef(rgb, 130, 90, 760, 200)) {
-            dailyIdleAt = now
-            dailyStep = maxOf(dailyStep, 10)
-            if (dailyStep < 20 && colorFrac(rgb, 925.0, 1800.0, green, greenHi, 14) >= 0.2 && dailyBtn < 4) {
-                dailyBtn++
-                clickRef(925.0, 1800.0, "daily : Fontaine Vitale : Conquête : Récupérer")
-            } else {
-                dailyStep = 20
-                lastClick = now
-                backArrow()
-                log("daily : Fontaine Vitale : Récupérer grisé, flèche retour de Conquête")
-            }
-            return
-        }
+        if (conqueteScreens(rgb, now)) return
         // île « Mon île » : gouttes, puis Conquête, ou sortie
         val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
         val labels = listOf("conqu", "héros", "heros", "magasin", "alliance").count { it in bar }
