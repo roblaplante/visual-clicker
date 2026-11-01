@@ -1706,6 +1706,18 @@ class BotService : Service() {
                     clickRef(995.0, 1855.0, "daily : Ordres : point rouge, ouverture des ordres")
                     return
                 }
+                // Missions quotidiennes : icône du parchemin en bas à gauche avec un chiffre dans un rond rouge
+                if (cityVisible && (dailyAttempts["missions"] ?: 0) < 2 && redBadgeOnMissions(rgb)) {
+                    dailyAttempts["missions"] = (dailyAttempts["missions"] ?: 0) + 1
+                    dailyState = "MISSIONS"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    clickRef(60.0, 2000.0, "daily : Missions quotidiennes : rond rouge, ouverture")
+                    return
+                }
                 // Puis l'événement « Assaut Rebelle » (golem rouge en haut à gauche, avec son minuteur)
                 val golem = if (cityVisible && (dailyAttempts["combat"] ?: 0) < 2) farmMatch(screen, "golem", 0.8) else null
                 if (golem != null) {
@@ -1821,6 +1833,7 @@ class BotService : Service() {
             "FONTAINE" -> detectFontaine(screen, rgb, now)
             "COMBAT" -> detectCombat(screen, rgb, now)
             "CONQUETE" -> detectConquete(rgb, now)
+            "MISSIONS" -> detectMissions(rgb, now)
         }
     }
 
@@ -2327,6 +2340,58 @@ class BotService : Service() {
         }
         res.release()
         return out
+    }
+
+
+    /** Rond rouge avec un chiffre sur l'icône des missions (parchemin, en bas à gauche de la ville). */
+    private fun redBadgeOnMissions(rgb: Mat): Boolean {
+        val a = colorRect(rgb, 85, 1950, 111, 1976, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0))
+        val b = colorRect(rgb, 85, 1950, 111, 1976, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0))
+        return a + b > 0.25
+    }
+
+    /**
+     * Missions quotidiennes (préambule) : icône du parchemin > fenêtre « Quotidien » > « Récupérer Tout » (vert) >
+     * écrans « Récompenses » (appui n'importe où, parfois deux) > croix en haut à droite de la fenêtre.
+     */
+    private fun detectMissions(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Missions quotidiennes abandonnées (10 s sans écran reconnu)")
+            lastClick = now
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        val bottom = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in bottom || "quitter" in bottom) {
+            dailyIdleAt = now
+            dailyStep = maxOf(dailyStep, 1)
+            clickRef(540.0, 1700.0, "daily : Missions quotidiennes : récompenses : appui n'importe où")
+            return
+        }
+        val tabs = ocrRef(rgb, 180, 1920, 900, 1990, true)
+        if ("otidien" in tabs || "quotid" in tabs || "expans" in tabs) {
+            dailyIdleAt = now
+            val green = colorRect(rgb, 360, 1745, 725, 1845, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0))
+            if (green >= 0.2 && dailyBtn < 3) {
+                dailyBtn++
+                dailyStep = 1
+                clickRef(540.0, 1795.0, "daily : Missions quotidiennes : Récupérer Tout")
+            } else {
+                dailyStep = 2
+                clickRef(1033.0, 440.0, "daily : Missions quotidiennes : fermeture par la croix")
+            }
+            return
+        }
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        if (listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar } >= 2) {
+            dailyIdleAt = now
+            if (dailyStep >= 2) dailyTaskDone("Missions quotidiennes")
+            else if (dailyStep == 0 && now - dailyActAt > 3_500L) {
+                dailyActAt = now
+                clickRef(60.0, 2000.0, "daily : Missions quotidiennes : nouvelle ouverture")
+            }
+        }
     }
 
     /** Part de pixels d'une couleur HSV dans un rectangle (coordonnées de référence 1080 px). */
