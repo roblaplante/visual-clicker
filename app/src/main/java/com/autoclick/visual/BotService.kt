@@ -1537,6 +1537,7 @@ class BotService : Service() {
     private var dailyStepAt = 0L
     private var dailyTries = 0
     private var dailyBtn = 0 // clics répétés sur un même bouton (évite de rester bloqué)
+    private var dailyGrey = 0 // lectures consécutives du bouton grisé
     private var dailyActAt = 0L
     private var dailyIdleAt = 0L // dernier instant où un écran connu a été reconnu : au-delà de 10 s sans rien, on abandonne
     private var dailyFinished = false
@@ -1665,13 +1666,17 @@ class BotService : Service() {
                 // Tâches connues, repérées par leur titre ; une ligne présente = à faire (le jeu masque les terminées).
                 val cands = ArrayList<Pair<Double, String>>()
                 var aventureCy = -1.0
+                var contribCy = -1.0
                 for (l in lines) {
                     val t = l.text.lowercase()
                     if ("ligne" in t) cands.add(Pair(l.cy, "enligne"))
                     // « Aventure Animalière » apparaît deux fois (titre de section puis tâche) : on prend la plus basse
                     if ("aventure" in t && "animal" in t) aventureCy = maxOf(aventureCy, l.cy)
                     if ("provisions" in t) cands.add(Pair(l.cy, "provisions"))
+                    // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
+                    if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
                 }
+                if (contribCy >= 0) cands.add(Pair(contribCy, "contrib"))
                 if (aventureCy >= 0) cands.add(Pair(aventureCy, "aventure"))
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
@@ -1682,6 +1687,7 @@ class BotService : Service() {
                     dailyState = key.uppercase()
                     dailyStep = 0
                     dailyBtn = 0
+                    dailyGrey = 0
                     dailyActAt = 0L
                     dailyIdleAt = now
                     dailyStepAt = now
@@ -1713,6 +1719,7 @@ class BotService : Service() {
             }
             "AVENTURE" -> detectAventure(rgb, now)
             "PROVISIONS" -> detectProvisions(rgb, now)
+            "CONTRIB" -> detectContrib(rgb, now)
         }
     }
 
@@ -1756,6 +1763,84 @@ class BotService : Service() {
                 dailyActAt = now
                 dailyStep = 1
                 clickRef(935.0, 145.0, "daily : Provisions : clic sur le + du compteur")
+            }
+        }
+    }
+
+
+    /**
+     * Contrib. d'All. : carte > bouton Alliance (barre du bas) > Tech > nœud « Marché Conclu » > bouton
+     * « Contribuer » cliqué tant qu'il est actif (cyan) > bouton grisé = stop > croix > flèche (Technologie)
+     * > flèche (Alliance).
+     */
+    private fun detectContrib(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Contrib. d'All. abandonnée (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // fenêtre « Marché Conclu » (ligne « Nouvelle tentative de Contribution dans … » sous la fenêtre)
+        val dlg = ocrRef(rgb, 100, 1915, 980, 1975)
+        if ("tentative" in dlg || "contribution" in dlg) {
+            dailyIdleAt = now
+            if (dailyStep >= 5) {
+                clickRef(960.0, 548.0, "daily : Contrib. d'All. : fenêtre fermée par la croix")
+                return
+            }
+            dailyStep = 4
+            val cyan = colorFrac(rgb, 765.0, 1790.0, Scalar(86.0, 90.0, 120.0), Scalar(105.0, 255.0, 255.0))
+            if (cyan >= 0.25 && dailyBtn < 30) {
+                dailyBtn++
+                dailyGrey = 0
+                clickRef(765.0, 1790.0, "daily : Contrib. d'All. : contribution $dailyBtn")
+                lastClick = now - (cooldown - 300L).coerceAtLeast(0L) // on enchaîne les contributions plus vite
+            } else if (++dailyGrey >= 2) {
+                dailyStep = 5
+                clickRef(960.0, 548.0, "daily : Contrib. d'All. : bouton grisé (stop) après $dailyBtn contribution(s), fermeture")
+            }
+            return
+        }
+        val title = ocrRef(rgb, 130, 90, 760, 200)
+        if ("nolog" in title) { // Technologie de l'Alliance
+            dailyIdleAt = now
+            if (dailyStep >= 5) {
+                lastClick = now
+                backArrow()
+                log("daily : Contrib. d'All. : flèche retour (Technologie)")
+            } else if (now - dailyActAt > 3_500L) {
+                dailyActAt = now
+                dailyStep = maxOf(dailyStep, 3)
+                clickRef(540.0, 1990.0, "daily : Contrib. d'All. : clic sur Marché Conclu")
+            }
+            return
+        }
+        if ("alliance" in title && "territ" !in title) { // écran Alliance
+            dailyIdleAt = now
+            if (dailyStep >= 5) {
+                lastClick = now
+                backArrow()
+                dailyTaskDone("Contrib. d'All.")
+            } else if (now - dailyActAt > 3_500L) {
+                dailyActAt = now
+                dailyStep = maxOf(dailyStep, 2)
+                clickRef(878.0, 1500.0, "daily : Contrib. d'All. : clic Tech")
+            }
+            return
+        }
+        // carte / ville : barre du bas visible
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val seen = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar }
+        if (seen >= 2) {
+            dailyIdleAt = now
+            if (dailyStep >= 5) {
+                dailyTaskDone("Contrib. d'All.")
+            } else if (dailyStep < 2 && now - dailyActAt > 3_500L) {
+                dailyActAt = now
+                dailyStep = 1
+                clickRef(803.0, 2240.0, "daily : Contrib. d'All. : clic Alliance (barre du bas)")
             }
         }
     }
