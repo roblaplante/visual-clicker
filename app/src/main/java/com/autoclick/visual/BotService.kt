@@ -2310,6 +2310,21 @@ class BotService : Service() {
             clickRef(540.0, 1700.0, "daily : récompenses : appui n'importe où")
             return
         }
+        // fenêtre « Trésor d'Allié » onglet « Mes partages » : bouton « Partager » (avec point rouge) puis croix en haut à droite
+        val tabs = ocrRef(rgb, 100, 665, 980, 740, true)
+        if (("mes part" in tabs || "partages" in tabs) && "restant" !in ocrRef(rgb, 200, 785, 880, 855, true)) {
+            dailyIdleAt = now
+            val cyan = colorFrac(rgb, 860.0, 870.0, Scalar(86.0, 90.0, 120.0), Scalar(105.0, 255.0, 255.0))
+            val dot = colorFrac(rgb, 968.0, 822.0, Scalar(0.0, 150.0, 180.0), Scalar(8.0, 255.0, 255.0), 8) +
+                colorFrac(rgb, 968.0, 822.0, Scalar(172.0, 150.0, 180.0), Scalar(179.0, 255.0, 255.0), 8)
+            if (cyan >= 0.2 && dot >= 0.3 && dailyBtn < 3) {
+                dailyBtn++
+                clickRef(860.0, 870.0, "daily : Trésor d'Allié : Partager")
+            } else {
+                clickRef(1000.0, 583.0, "daily : Trésor d'Allié : fermeture par la croix")
+            }
+            return
+        }
         // fenêtre « Trésor d'Allié » : Récupérer Tout s'il y en a, sinon clic dans le vide pour la fermer
         val tres = ocrRef(rgb, 200, 785, 880, 855, true)
         if ("clamer" in tres || "restant" in tres) {
