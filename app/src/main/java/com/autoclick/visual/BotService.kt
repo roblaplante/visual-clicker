@@ -1629,7 +1629,7 @@ class BotService : Service() {
 
         when (dailyState) {
             "OPEN" -> {
-                if (++dailyTries > 14) { dailyFinish("menu de gauche introuvable"); return }
+                if (++dailyTries > 20) { dailyFinish("menu de gauche introuvable"); return }
                 val tabs = ocrRef(rgb, 15, 615, 665, 695)
                 val open = "ville" in tabs || "nature" in tabs || "quot" in tabs
                 if (open) {
@@ -1659,24 +1659,28 @@ class BotService : Service() {
                     if (++dailyTries > 4) { dailyState = "OPEN"; dailyTries = 0 }
                     return
                 }
-                var launched = false
-                for (l in lines.sortedBy { it.cy }) {
+                // Tâches connues, repérées par leur titre ; une ligne présente = à faire (le jeu masque les terminées).
+                val cands = ArrayList<Pair<Double, String>>()
+                var aventureCy = -1.0
+                for (l in lines) {
                     val t = l.text.lowercase()
-                    val rowY = (y0 + l.cy) / sc // centre de la ligne en coordonnées de référence
-                    if ("ligne" in t) { // Mes Récompenses : Récomp. En Ligne
-                        if ((dailyAttempts["enligne"] ?: 0) >= 2) continue
-                        if (greenAt(rgb, 607.0, rowY + 21) < 0.25) {
-                            log("daily : Récomp. En Ligne pas prête (pas de coche verte)")
-                            continue
-                        }
-                        dailyAttempts["enligne"] = (dailyAttempts["enligne"] ?: 0) + 1
-                        dailyState = "ENLIGNE"
-                        dailyStep = 0
-                        dailyStepAt = now
-                        clickRef(335.0, rowY + 21, "daily : Récomp. En Ligne : clic sur le texte de la tâche") // le texte déclenche comme la coche
-                        launched = true
-                        break
-                    }
+                    if ("ligne" in t) cands.add(Pair(l.cy, "enligne"))
+                    // « Aventure Animalière » apparaît deux fois (titre de section puis tâche) : on prend la plus basse
+                    if ("aventure" in t && "animal" in t) aventureCy = maxOf(aventureCy, l.cy)
+                }
+                if (aventureCy >= 0) cands.add(Pair(aventureCy, "aventure"))
+                cands.sortBy { it.first } // du haut vers le bas
+                var launched = false
+                for ((cy, key) in cands) {
+                    if ((dailyAttempts[key] ?: 0) >= 2) continue
+                    val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence
+                    dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
+                    dailyState = key.uppercase()
+                    dailyStep = 0
+                    dailyStepAt = now
+                    clickRef(335.0, rowY + 21, "daily : $key : clic sur le texte de la tâche") // le texte déclenche comme la coche
+                    launched = true
+                    break
                 }
                 if (!launched) dailyFinish("Daily terminé : plus de tâche à faire")
             }
@@ -1698,6 +1702,80 @@ class BotService : Service() {
                     val (x, y) = farmCenter("coffre_bulle", mb)
                     farmClick(x, y - (38 * w / 1080.0).toFloat(), "daily : clic sur le coffre")
                     dailyStep = 1
+                }
+            }
+            "AVENTURE" -> detectAventure(rgb, now)
+        }
+    }
+
+    /** Part de pixels d'une couleur HSV autour d'un point de référence. */
+    private fun colorFrac(rgb: Mat, x: Double, y: Double, lo: Scalar, hi: Scalar, r0: Int = 22): Double {
+        val sc = rgb.cols() / 1080.0
+        val r = r0 * sc
+        val x0 = (x * sc - r).toInt()
+        val y0 = (y * sc - r).toInt()
+        val sz = (2 * r).toInt()
+        if (x0 < 0 || y0 < 0 || sz <= 0 || x0 + sz > rgb.cols() || y0 + sz > rgb.rows()) return 0.0
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(x0, y0, sz, sz)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, lo, hi, m)
+        val f = Core.countNonZero(m).toDouble() / (sz * sz)
+        hsv.release(); m.release()
+        return f
+    }
+
+    /** Point rouge de notification sur le coffre « Trésor d'Allié » (en bas à droite). */
+    private fun redDotOnTreasure(rgb: Mat): Boolean =
+        colorFrac(rgb, 1000.0, 2168.0, Scalar(0.0, 150.0, 180.0), Scalar(8.0, 255.0, 255.0), 14) +
+            colorFrac(rgb, 1000.0, 2168.0, Scalar(172.0, 150.0, 180.0), Scalar(179.0, 255.0, 255.0), 14) > 0.15
+
+    /**
+     * Aventure Animalière, guidée par l'écran : « Récupérer Tout » (coffres cochés) ou « Tout chasser » (tentatives),
+     * écran « Récompenses » (appui n'importe où), puis, s'il y a un point rouge sur le coffre en bas à droite :
+     * Trésor d'Allié > Récupérer Tout > récompenses > clic dans le vide ; sinon flèche bleue en haut à gauche.
+     */
+    private fun detectAventure(rgb: Mat, now: Long) {
+        if (now - dailyStepAt > 120_000L) {
+            log("daily : Aventure Animalière abandonnée (2 min sans finir)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // écran « Récompenses » : appuyer n'importe où
+        val reward = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in reward || "quitter" in reward) {
+            clickRef(540.0, 1700.0, "daily : récompenses : appui n'importe où")
+            return
+        }
+        // fenêtre « Trésor d'Allié » : Récupérer Tout s'il y en a, sinon clic dans le vide pour la fermer
+        val tres = ocrRef(rgb, 200, 785, 880, 855, true)
+        if ("clamer" in tres || "restant" in tres) {
+            if (colorFrac(rgb, 540.0, 1830.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.2) {
+                clickRef(540.0, 1830.0, "daily : Trésor d'Allié : Récupérer Tout")
+            } else {
+                clickRef(575.0, 370.0, "daily : Trésor d'Allié : clic dans le vide pour fermer")
+            }
+            return
+        }
+        // écran de l'Aventure Animalière
+        val hdr = ocrRef(rgb, 150, 245, 930, 325)
+        if ("tentative" in hdr) {
+            val green = colorFrac(rgb, 540.0, 2040.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0))
+            val cyan = colorFrac(rgb, 540.0, 2040.0, Scalar(86.0, 60.0, 120.0), Scalar(105.0, 255.0, 255.0))
+            when {
+                green >= 0.25 -> clickRef(540.0, 2040.0, "daily : Aventure Animalière : Récupérer Tout")
+                cyan >= 0.25 -> clickRef(540.0, 2040.0, "daily : Aventure Animalière : Tout chasser")
+                redDotOnTreasure(rgb) && dailyStep < 3 -> { // 3 ouvertures au plus : évite de tourner en boucle
+                    dailyStep++
+                    clickRef(945.0, 2240.0, "daily : point rouge sur le coffre : ouverture du Trésor d'Allié")
+                }
+                else -> {
+                    lastClick = now
+                    backArrow()
+                    dailyTaskDone("Aventure Animalière")
                 }
             }
         }
