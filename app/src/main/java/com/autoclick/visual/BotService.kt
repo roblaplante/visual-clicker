@@ -1611,6 +1611,7 @@ class BotService : Service() {
             huntStartedAt = 0L
             huntSearchedAt = 0L
             huntLevelClicks = 0
+            huntTileClicks = 0
             farmClick(x, y, "hunt : clic Déployer, chasse $huntDone/$huntTarget lancée")
             return
         }
@@ -1639,11 +1640,16 @@ class BotService : Service() {
                 huntWait(used, now)
                 return
             }
-            if (farmMatch(screen, "rejoindre_auto", 0.8) == null) {
-                // Terreur n'est pas sélectionnée (« Rejoindre Auto. » n'apparaît qu'avec elle) : on touche la tuile.
-                val mt = farmMatch(screen, "tile_terreur", 0.8)
+            val mt = farmMatch(screen, "tile_terreur", 0.8)
+            // Terreur est sélectionnée si « Rejoindre Auto. » est visible (mais son icône change quand il tourne,
+            // avec un minuteur) ou si les quatre coins orange de sélection entourent la tuile.
+            val selected = farmMatch(screen, "rejoindre_auto", 0.8) != null ||
+                (mt != null && farmCenter("tile_terreur", mt).let { (cx, cy) -> tileSelected(rgb, cx, cy) }) ||
+                huntTileClicks >= 3
+            if (!selected) {
                 if (mt != null) {
                     val (x, y) = farmCenter("tile_terreur", mt)
+                    huntTileClicks++
                     farmClick(x, y, "hunt : clic tuile Terreur")
                 } else {
                     swipeRow(0.76 * h, 0.6 * w, now)
@@ -1662,6 +1668,7 @@ class BotService : Service() {
                 return
             }
             huntSearchedAt = now
+            huntTileClicks = 0
             farmClick(rx, ry, "hunt : clic Rechercher")
             return
         }
@@ -1676,6 +1683,32 @@ class BotService : Service() {
             val (x, y) = farmCenter("loupe", ml)
             farmClick(x, y, "hunt : clic loupe (marches $used/$marchTotal)")
         }
+    }
+
+    private var huntTileClicks = 0
+
+    /** Une tuile sélectionnée porte quatre coins orange (cadre) autour d'elle. cx, cy : centre de la tuile en pleine résolution. */
+    private fun tileSelected(rgb: Mat, cx: Float, cy: Float): Boolean {
+        val sc = w / 1080.0
+        val r = 24 * sc * SCALE
+        var hits = 0
+        for ((dx, dy) in listOf(-115 to -92, 115 to -92, -115 to 95, 115 to 95)) {
+            val px = (cx + dx * sc) * SCALE
+            val py = (cy + dy * sc) * SCALE
+            val x0 = (px - r).toInt()
+            val y0 = (py - r).toInt()
+            val sz = (2 * r).toInt()
+            if (x0 < 0 || y0 < 0 || sz <= 0 || x0 + sz > rgb.cols() || y0 + sz > rgb.rows()) continue
+            val roi = Mat(rgb, Rect(x0, y0, sz, sz))
+            val hsv = Mat()
+            Imgproc.cvtColor(roi, hsv, Imgproc.COLOR_RGB2HSV)
+            val mask = Mat()
+            Core.inRange(hsv, Scalar(12.0, 150.0, 180.0), Scalar(30.0, 255.0, 255.0), mask)
+            val f = Core.countNonZero(mask).toDouble() / (sz * sz)
+            hsv.release(); mask.release()
+            if (f >= 0.05) hits++
+        }
+        return hits >= 3
     }
 
     /** Vrai si la zone (centre cx, cy ; demi-côté r, en demi-résolution) est plutôt cyan (bouton actif). */
@@ -1757,10 +1790,10 @@ class BotService : Service() {
     // ---------- Bouton flottant ----------
 
     private fun addOverlay() {
-        val size = (56 * resources.displayMetrics.density).toInt()
+        val size = (44 * resources.displayMetrics.density).toInt()
         val tv = TextView(this).apply {
             text = "▶"
-            textSize = 22f
+            textSize = 18f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
@@ -1776,8 +1809,8 @@ class BotService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = resources.displayMetrics.widthPixels - size // à droite : ne masque pas le panneau des marches
-            y = 900
+            x = size + (6 * resources.displayMetrics.density).toInt() // en haut à gauche, à droite du bouton ☰
+            y = 150 // même hauteur que ☰ : ne masque ni les pins ni le panneau des marches
         }
 
         var startX = 0
