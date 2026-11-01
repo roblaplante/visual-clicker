@@ -1706,6 +1706,19 @@ class BotService : Service() {
                     clickRef(995.0, 1855.0, "daily : Ordres : point rouge, ouverture des ordres")
                     return
                 }
+                // Coffres d'alliance : chiffre rouge sur le bouton Alliance de la barre du bas
+                if (cityVisible && (dailyAttempts["coffres"] ?: 0) < 2 && redBadgeOnAlliance(rgb)) {
+                    dailyAttempts["coffres"] = (dailyAttempts["coffres"] ?: 0) + 1
+                    dailyState = "COFFRES"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyGrey = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    clickRef(803.0, 2240.0, "daily : Coffres d'alliance : chiffre rouge sur Alliance, ouverture")
+                    return
+                }
                 // Missions quotidiennes : icône du parchemin en bas à gauche avec un chiffre dans un rond rouge
                 if (cityVisible && (dailyAttempts["missions"] ?: 0) < 2 && redBadgeOnMissions(rgb)) {
                     dailyAttempts["missions"] = (dailyAttempts["missions"] ?: 0) + 1
@@ -1834,6 +1847,7 @@ class BotService : Service() {
             "COMBAT" -> detectCombat(screen, rgb, now)
             "CONQUETE" -> detectConquete(rgb, now)
             "MISSIONS" -> detectMissions(rgb, now)
+            "COFFRES" -> detectCoffres(rgb, now)
         }
     }
 
@@ -2393,6 +2407,107 @@ class BotService : Service() {
             }
         }
     }
+
+
+    /** Chiffre rouge sur le bouton « Alliance » de la barre du bas (ville). */
+    private fun redBadgeOnAlliance(rgb: Mat): Boolean {
+        val a = colorRect(rgb, 820, 2182, 866, 2222, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0))
+        val b = colorRect(rgb, 820, 2182, 866, 2222, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0))
+        return a + b > 0.12
+    }
+
+    /**
+     * Coffres d'alliance (préambule) : Alliance > Caisses > onglet « Cadeau d'Alliance » (Récupérer Tout, récompenses, coffre
+     * du haut seulement s'il a une bulle rouge) > onglet « Caisse de Butin » (Récupérer Tout, récompenses) > croix > ville.
+     * Si le coffre du haut a été touché sans bulle (fenêtre « Caisse d'Honneur ») : clic dans le vide en haut pour revenir.
+     */
+    private fun detectCoffres(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Coffres d'alliance abandonnés (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        val green = Scalar(55.0, 100.0, 120.0)
+        val greenHi = Scalar(85.0, 255.0, 255.0)
+        // écran « Récompenses »
+        val bottom = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in bottom || "quitter" in bottom) {
+            dailyIdleAt = now
+            clickRef(540.0, 1700.0, "daily : Coffres : récompenses : appui n'importe où")
+            return
+        }
+        // fenêtre « Récompense de Caisse d'Honneur » (coffre touché sans bulle rouge) : clic dans le vide en haut
+        if ("honneur" in ocrRef(rgb, 190, 600, 890, 670)) {
+            dailyIdleAt = now
+            clickRef(575.0, 330.0, "daily : Coffres : fenêtre Caisse d'Honneur, demi-tour par clic en haut")
+            return
+        }
+        val title = ocrRef(rgb, 130, 90, 500, 200)
+        if ("caisse" in title) {
+            dailyIdleAt = now
+            val vl = meanV(rgb, 60, 640, 520, 730)
+            val vr = meanV(rgb, 560, 640, 1030, 730)
+            val cadeauSel = vr > vl + 12
+            if (dailyStep >= 5) { // on a tout fait : croix
+                clickRef(1023.0, 142.0, "daily : Coffres : fermeture par la croix")
+                return
+            }
+            if (cadeauSel) {
+                if (dailyStep < 3 && colorRect(rgb, 790, 2150, 1020, 2260, green, greenHi) >= 0.2 && dailyBtn < 3) {
+                    dailyBtn++
+                    clickRef(900.0, 2200.0, "daily : Coffres : Cadeau d'Alliance : Récupérer Tout")
+                } else if (dailyStep < 3 && dailyGrey < 1 && redDotAt(rgb, 680.0, 320.0)) {
+                    dailyGrey++ // un seul essai : la bulle rouge dit qu'il y a un coffre à ouvrir
+                    clickRef(540.0, 400.0, "daily : Coffres : coffre du haut (bulle rouge)")
+                } else if (dailyStep < 3 || dailyStep == 3) {
+                    dailyStep = 3
+                    dailyBtn = 0
+                    clickRef(285.0, 680.0, "daily : Coffres : onglet Caisse de Butin")
+                }
+            } else {
+                dailyStep = maxOf(dailyStep, 3)
+                if (colorRect(rgb, 330, 2180, 750, 2290, green, greenHi) >= 0.2 && dailyBtn < 3) {
+                    dailyBtn++
+                    clickRef(540.0, 2235.0, "daily : Coffres : Caisse de Butin : Récupérer Tout")
+                } else {
+                    dailyStep = 5
+                    clickRef(1023.0, 142.0, "daily : Coffres : Récupérer Tout grisé, fermeture par la croix")
+                }
+            }
+            return
+        }
+        // écran Alliance
+        if ("alliance" in title) {
+            dailyIdleAt = now
+            if (dailyStep >= 5) {
+                lastClick = now
+                backArrow()
+                dailyTaskDone("Coffres d'alliance")
+            } else if (now - dailyActAt > 3_000L) {
+                dailyActAt = now
+                clickRef(790.0, 1100.0, "daily : Coffres : clic Caisses")
+            }
+            return
+        }
+        // ville
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        if (listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar } >= 2) {
+            dailyIdleAt = now
+            if (dailyStep >= 5) dailyTaskDone("Coffres d'alliance")
+            else if (dailyStep == 0 && now - dailyActAt > 3_500L) {
+                dailyActAt = now
+                clickRef(803.0, 2240.0, "daily : Coffres : nouveau clic Alliance")
+            }
+        }
+    }
+
+    /** Pastille rouge autour d'un point de référence. */
+    private fun redDotAt(rgb: Mat, x: Double, y: Double): Boolean =
+        colorFrac(rgb, x, y, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0), 16) +
+            colorFrac(rgb, x, y, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0), 16) > 0.2
 
     /** Part de pixels d'une couleur HSV dans un rectangle (coordonnées de référence 1080 px). */
     private fun colorRect(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int, lo: Scalar, hi: Scalar): Double {
