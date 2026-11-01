@@ -35,7 +35,7 @@ import java.io.FileOutputStream
  */
 class MainActivity : AppCompatActivity() {
 
-    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?)
+    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?), 7 = Daily
     private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
     private var huntN = 5 // idem pour le hunt
     private lateinit var huntCountEdit: EditText
@@ -161,6 +161,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(button("Missions de renseignements") { showIntelChoice() })
         root.addView(button("Farm") { showFarmChoice() })
         root.addView(button("Hunt (chasses de Terreur)") { showHuntChoice() })
+        root.addView(button("Daily (tâches quotidiennes)") { showDaily() })
 
         root.addView(label("Autorisations (à faire une seule fois)"))
         root.addView(button("Activer le service d'accessibilité") {
@@ -385,6 +386,55 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- Daily (onglet « Quot. » du menu de gauche) ----------
+
+    /** Repères : tâches de l'onglet « Quot. », de haut en bas, telles qu'elles apparaissent dans la liste. */
+    private val dailyTasks = listOf(
+        "Mes Récompenses : Récomp. En Ligne",
+        "Mes Récompenses : Banquet Gastronomique",
+        "Voyage : Voyage dans le royaume",
+        "Conquérir : Revenu d'inactivité",
+        "Collecte d'Essence d'Eau : Fontaine Vitale",
+        "Aventure Animalière",
+        "Épreuve Mystique : Flèche Éclatante",
+        "Creuseur en or véritable",
+        "Recruter des Héros : Avancé",
+        "Recruter des Héros : Épique",
+        "Contrib. d'All.",
+        "Observatoire : Renseignements",
+        "L'Arène",
+        "Triomphe d'Alliance : activité quotidienne"
+    )
+
+    private fun showDaily() {
+        screen = 7
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Daily"; textSize = 22f })
+        root.addView(
+            label(
+                "Principe : l'appli ouvre le menu de gauche (petite languette à triangle blanc), touche l'onglet " +
+                    "« Quot. », puis prend les tâches de la liste du haut vers le bas, une par une. Si une tâche est " +
+                    "présente, elle lance son scénario. Les scénarios arrivent tâche après tâche (en cours de préparation)."
+            )
+        )
+        root.addView(label("Tâches repérées (cochez celles à faire ; l'ordre est celui de la liste du jeu) :"))
+        dailyTasks.forEachIndexed { i, name ->
+            val n = i + 1
+            root.addView(CheckBox(this).apply {
+                text = "$n. $name"
+                isChecked = sp.getBoolean("dailyTask$n", true)
+                setOnCheckedChangeListener { _, c -> sp.edit().putBoolean("dailyTask$n", c).apply() }
+            })
+        }
+        root.addView(
+            label(
+                "Les tâches terminées disparaissent de la liste (option « Masquer une fois la mission terminée »). " +
+                    "Le bouton Démarrer sera ajouté avec les premiers scénarios."
+            )
+        )
+    }
+
     // ---------- Hunt (chasses de Terreur) ----------
 
     private fun showHuntChoice() {
@@ -460,7 +510,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
-        if (screen == 0 || screen == 3 || screen == 4 || screen == 6) return
+        if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
