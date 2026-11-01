@@ -1536,6 +1536,8 @@ class BotService : Service() {
     private var dailyStep = 0
     private var dailyStepAt = 0L
     private var dailyTries = 0
+    private var dailyBtn = 0 // clics répétés sur un même bouton (évite de rester bloqué)
+    private var dailyActAt = 0L
     private var dailyFinished = false
     private val dailyAttempts = HashMap<String, Int>()
 
@@ -1667,6 +1669,7 @@ class BotService : Service() {
                     if ("ligne" in t) cands.add(Pair(l.cy, "enligne"))
                     // « Aventure Animalière » apparaît deux fois (titre de section puis tâche) : on prend la plus basse
                     if ("aventure" in t && "animal" in t) aventureCy = maxOf(aventureCy, l.cy)
+                    if ("provisions" in t) cands.add(Pair(l.cy, "provisions"))
                 }
                 if (aventureCy >= 0) cands.add(Pair(aventureCy, "aventure"))
                 cands.sortBy { it.first } // du haut vers le bas
@@ -1677,6 +1680,8 @@ class BotService : Service() {
                     dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
                     dailyState = key.uppercase()
                     dailyStep = 0
+                    dailyBtn = 0
+                    dailyActAt = 0L
                     dailyStepAt = now
                     clickRef(335.0, rowY + 21, "daily : $key : clic sur le texte de la tâche") // le texte déclenche comme la coche
                     launched = true
@@ -1705,6 +1710,49 @@ class BotService : Service() {
                 }
             }
             "AVENTURE" -> detectAventure(rgb, now)
+            "PROVISIONS" -> detectProvisions(rgb, now)
+        }
+    }
+
+
+    /**
+     * Provisions de voyage : écran du Voyage > « + » du compteur de provisions en haut à droite > fenêtre >
+     * « Récupérer » > croix rouge > flèche bleue en haut à gauche.
+     */
+    private fun detectProvisions(rgb: Mat, now: Long) {
+        if (now - dailyStepAt > 60_000L) {
+            log("daily : Provisions de voyage abandonnée (1 min sans finir)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // fenêtre des provisions (« Appuie n'importe où pour fermer »)
+        val dlg = ocrRef(rgb, 200, 1680, 880, 1750)
+        if ("fermer" in dlg) {
+            if (colorFrac(rgb, 862.0, 1090.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.3 && dailyBtn < 4) {
+                dailyBtn++
+                dailyStep = 2
+                clickRef(862.0, 1090.0, "daily : Provisions : clic Récupérer")
+            } else {
+                dailyStep = 3
+                clickRef(1040.0, 870.0, "daily : Provisions : fenêtre fermée par la croix")
+            }
+            return
+        }
+        // écran du Voyage (panneaux « Terres perdues » / « Voyage dans le royaume »)
+        val signs = ocrRef(rgb, 40, 1000, 330, 1100) + " " + ocrRef(rgb, 780, 1110, 1060, 1200)
+        if ("perdue" in signs || "royaume" in signs) {
+            if (dailyStep >= 2) {
+                lastClick = now
+                backArrow()
+                dailyTaskDone("Provisions de voyage")
+            } else if (now - dailyActAt > 3_500L) {
+                dailyActAt = now
+                dailyStep = 1
+                clickRef(935.0, 145.0, "daily : Provisions : clic sur le + du compteur")
+            }
         }
     }
 
@@ -1766,8 +1814,8 @@ class BotService : Service() {
             val green = colorFrac(rgb, 540.0, 2040.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0))
             val cyan = colorFrac(rgb, 540.0, 2040.0, Scalar(86.0, 60.0, 120.0), Scalar(105.0, 255.0, 255.0))
             when {
-                green >= 0.25 -> clickRef(540.0, 2040.0, "daily : Aventure Animalière : Récupérer Tout")
-                cyan >= 0.25 -> clickRef(540.0, 2040.0, "daily : Aventure Animalière : Tout chasser")
+                green >= 0.25 && dailyBtn < 8 -> { dailyBtn++; clickRef(540.0, 2040.0, "daily : Aventure Animalière : Récupérer Tout") }
+                cyan >= 0.25 && dailyBtn < 8 -> { dailyBtn++; clickRef(540.0, 2040.0, "daily : Aventure Animalière : Tout chasser") }
                 redDotOnTreasure(rgb) && dailyStep < 3 -> { // 3 ouvertures au plus : évite de tourner en boucle
                     dailyStep++
                     clickRef(945.0, 2240.0, "daily : point rouge sur le coffre : ouverture du Trésor d'Allié")
