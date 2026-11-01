@@ -404,9 +404,11 @@ class MainActivity : AppCompatActivity() {
         root.addView(
             label(
                 "Les tâches sans scénario sont ignorées ; certaines auront plus tard un sous-menu à activer à la demande. " +
-                    "Les scénarios arrivent tâche après tâche (en préparation) : le bouton Démarrer sera ajouté avec les premiers."
+                    "Les scénarios arrivent tâche après tâche (en préparation). Pour l'instant : « Récomp. En Ligne »."
             )
         )
+        root.addView(label("Ouvrez le jeu sur la ville (ou la carte), menu de gauche fermé, puis démarrez."))
+        root.addView(button("Démarrer") { start("daily") })
     }
 
     // ---------- Hunt (chasses de Terreur) ----------

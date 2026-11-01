@@ -181,6 +181,8 @@ class BotService : Service() {
             loadFarm()
         } else if (mode == "hunt") {
             loadHunt()
+        } else if (mode == "daily") {
+            loadDaily()
         } else {
             loadTemplates()
             loadGate()
@@ -544,6 +546,10 @@ class BotService : Service() {
         }
         if (mode == "hunt") {
             detectHunt(screen, rgb)
+            return
+        }
+        if (mode == "daily") {
+            detectDaily(screen, rgb)
             return
         }
         val now = SystemClock.uptimeMillis()
@@ -1524,6 +1530,179 @@ class BotService : Service() {
         lastClick = now + 600
     }
 
+    // ---------- Mode Daily (onglet « Quot. » du menu de gauche) ----------
+
+    private var dailyState = "OPEN" // OPEN = ouvrir menu + onglet, LIST = lire la liste, sinon : scénario de la tâche
+    private var dailyStep = 0
+    private var dailyStepAt = 0L
+    private var dailyTries = 0
+    private var dailyFinished = false
+    private val dailyAttempts = HashMap<String, Int>()
+
+    private fun resetDaily() {
+        dailyState = "OPEN"; dailyStep = 0; dailyStepAt = 0L; dailyTries = 0; dailyFinished = false
+        dailyAttempts.clear()
+    }
+
+    private fun loadDaily() {
+        for (path in listOf("daily/coffre_bulle.png")) {
+            val m = loadAsset(path) ?: continue
+            farm[path.substringAfter('/').removeSuffix(".png")] = m
+        }
+        resetDaily()
+        log("daily : démarrage")
+    }
+
+    /** Texte d'une zone (coordonnées de référence 1080 px). */
+    private fun ocrRef(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int, dark: Boolean = false): String {
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bx = minOf((x1 * sc).toInt(), rgb.cols())
+        val by = minOf((y1 * sc).toInt(), rgb.rows())
+        if (bx <= ax || by <= ay) return ""
+        return ocrText(Mat(rgb, Rect(ax, ay, bx - ax, by - ay)), dark).lowercase()
+    }
+
+    /** Luminosité moyenne (V) d'une zone en coordonnées de référence. */
+    private fun meanV(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Double {
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bx = minOf((x1 * sc).toInt(), rgb.cols())
+        val by = minOf((y1 * sc).toInt(), rgb.rows())
+        if (bx <= ax || by <= ay) return 0.0
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(ax, ay, bx - ax, by - ay)), hsv, Imgproc.COLOR_RGB2HSV)
+        val v = Core.mean(hsv).`val`[2]
+        hsv.release()
+        return v
+    }
+
+    /** Part de pixels « vert » (bouton coche) autour d'un point de référence. */
+    private fun greenAt(rgb: Mat, x: Double, y: Double): Double {
+        val sc = rgb.cols() / 1080.0
+        val r = 22 * sc
+        val x0 = (x * sc - r).toInt()
+        val y0 = (y * sc - r).toInt()
+        val sz = (2 * r).toInt()
+        if (x0 < 0 || y0 < 0 || sz <= 0 || x0 + sz > rgb.cols() || y0 + sz > rgb.rows()) return 0.0
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(x0, y0, sz, sz)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0), m)
+        val f = Core.countNonZero(m).toDouble() / (sz * sz)
+        hsv.release(); m.release()
+        return f
+    }
+
+    private fun dailyFinish(msg: String) {
+        dailyFinished = true
+        log("daily : $msg")
+        main.post { pauseBot(msg) }
+    }
+
+    private fun dailyTaskDone(name: String) {
+        log("daily : $name terminée, retour à la liste")
+        dailyState = "OPEN"
+        dailyTries = 0
+    }
+
+    /**
+     * Daily : on ouvre le menu de gauche (languette), onglet « Quot. », on lit la liste, on exécute la première
+     * tâche prête qu'on sait faire, on revient à la liste, et ainsi de suite jusqu'à épuisement.
+     */
+    private fun detectDaily(screen: Mat, rgb: Mat) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClick < cooldown || dailyFinished) return
+
+        // Écran de récompense du personnage (« Nouvelle Caisse Prête Dans ») : un clic dans le vide le ferme.
+        if (dailyState == "ENLIGNE") {
+            val reward = ocrRef(rgb, 250, 1840, 830, 1900)
+            if ("caisse" in reward || "pr\u00eate" in reward || "prete" in reward) {
+                dailyStep = 2
+                dailyStepAt = now
+                clickRef(655.0, 370.0, "daily : clic dans le vide pour fermer l'écran de récompense")
+                return
+            }
+        }
+
+        when (dailyState) {
+            "OPEN" -> {
+                if (++dailyTries > 14) { dailyFinish("menu de gauche introuvable"); return }
+                val tabs = ocrRef(rgb, 15, 615, 665, 695)
+                val open = "ville" in tabs || "nature" in tabs || "quot" in tabs
+                if (open) {
+                    val q = meanV(rgb, 455, 625, 655, 685)
+                    val v = meanV(rgb, 20, 625, 220, 685)
+                    if (q > 150 && q > v + 40) {
+                        dailyState = "LIST"
+                        dailyTries = 0
+                    } else {
+                        clickRef(553.0, 655.0, "daily : clic onglet Quot.")
+                    }
+                } else {
+                    // Menu fermé : la languette est visible quand la barre du bas du jeu l'est aussi.
+                    val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+                    val seen = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar }
+                    if (seen >= 2) clickRef(20.0, 1075.0, "daily : ouverture du menu (languette)")
+                }
+            }
+            "LIST" -> {
+                val sc = rgb.cols() / 1080.0
+                val y0 = (695 * sc).toInt()
+                val x0 = (15 * sc).toInt()
+                val x1 = (665 * sc).toInt()
+                val y1 = minOf((1455 * sc).toInt(), rgb.rows())
+                val lines = ocrLines(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), false)
+                if (lines.isEmpty()) {
+                    if (++dailyTries > 4) { dailyState = "OPEN"; dailyTries = 0 }
+                    return
+                }
+                var launched = false
+                for (l in lines.sortedBy { it.cy }) {
+                    val t = l.text.lowercase()
+                    val rowY = (y0 + l.cy) / sc // centre de la ligne en coordonnées de référence
+                    if ("ligne" in t) { // Mes Récompenses : Récomp. En Ligne
+                        if ((dailyAttempts["enligne"] ?: 0) >= 2) continue
+                        if (greenAt(rgb, 607.0, rowY + 21) < 0.25) {
+                            log("daily : Récomp. En Ligne pas prête (pas de coche verte)")
+                            continue
+                        }
+                        dailyAttempts["enligne"] = (dailyAttempts["enligne"] ?: 0) + 1
+                        dailyState = "ENLIGNE"
+                        dailyStep = 0
+                        dailyStepAt = now
+                        clickRef(607.0, rowY + 21, "daily : Récomp. En Ligne : clic sur la coche verte")
+                        launched = true
+                        break
+                    }
+                }
+                if (!launched) dailyFinish("Daily terminé : plus de tâche à faire")
+            }
+            "ENLIGNE" -> {
+                if (dailyStep == 2) {
+                    // le clic dans le vide a été fait : si l'écran de récompense a disparu, c'est fini
+                    dailyTaskDone("Récomp. En Ligne")
+                    return
+                }
+                if (now - dailyStepAt > 25_000L) {
+                    log("daily : Récomp. En Ligne abandonnée (25 s sans avancer)")
+                    dailyState = "OPEN"
+                    dailyTries = 0
+                    return
+                }
+                // le coffre apparaît sur la carte (bulle avec la main) : on le touche
+                val mb = farmMatch(screen, "coffre_bulle", 0.75)
+                if (mb != null) {
+                    val (x, y) = farmCenter("coffre_bulle", mb)
+                    farmClick(x, y - (38 * w / 1080.0).toFloat(), "daily : clic sur le coffre")
+                    dailyStep = 1
+                }
+            }
+        }
+    }
+
     // ---------- Mode Hunt (chasses de Terreur par ralliement) ----------
 
     private var huntTarget = 3
@@ -1892,6 +2071,7 @@ class BotService : Service() {
                 taskStartedAt = 0L
                 searchedAt = 0L
             }
+            if (mode == "daily" && dailyFinished) resetDaily()
         }
         tv.text = if (running) "⏸" else "▶"
         (tv.background as GradientDrawable)
