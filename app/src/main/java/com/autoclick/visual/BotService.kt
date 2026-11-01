@@ -2078,7 +2078,9 @@ class BotService : Service() {
         }
         val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
         val labels = listOf("conqu", "héros", "heros", "magasin", "alliance").count { it in bar }
-        val drop = farmMatch(screen, "goutte", 0.75)
+        // toutes les gouttes visibles : on vise la plus basse d'abord (cela enlève la main sur celle du haut)
+        val drops = findAllCenters(screen, "goutte", 0.75)
+        val drop = drops.maxByOrNull { it.second }
         val island = drop != null || (labels >= 2 && "ville" in bar && "monde" !in bar) // sur l'île, le bouton du bas dit « Ville »
         if (island) {
             dailyIdleAt = now
@@ -2086,8 +2088,7 @@ class BotService : Service() {
                 dailyBtn++
                 dailyGrey = 0
                 dailyStep = 1
-                val (x, y) = farmCenter("goutte", drop)
-                farmClick(x, y, "daily : Fontaine Vitale : clic sur une goutte d'eau ($dailyBtn)")
+                farmClick(drop.first, drop.second, "daily : Fontaine Vitale : clic sur une goutte d'eau ($dailyBtn sur ${drops.size} vue(s))")
             } else if (++dailyGrey >= 2 && (dailyStep >= 1 || now - dailyStepAt > 5_000L)) {
                 lastClick = now
                 backArrow()
@@ -2096,6 +2097,34 @@ class BotService : Service() {
             return
         }
         if (labels >= 2 && "monde" in bar && dailyStep >= 1) dailyTaskDone("Fontaine Vitale")
+    }
+
+    /** Centres (pleine résolution) de toutes les correspondances d'une image, au-dessus du seuil. */
+    private fun findAllCenters(screen: Mat, name: String, thr: Double): List<Pair<Float, Float>> {
+        val t = farm[name] ?: return emptyList()
+        if (t.cols() > screen.cols() || t.rows() > screen.rows()) return emptyList()
+        val res = Mat()
+        Imgproc.matchTemplate(screen, t, res, Imgproc.TM_CCOEFF_NORMED)
+        val out = ArrayList<Pair<Float, Float>>()
+        repeat(6) {
+            val mm = Core.minMaxLoc(res)
+            if (mm.maxVal < thr) return@repeat
+            out.add(
+                Pair(
+                    ((mm.maxLoc.x + t.cols() / 2.0) / SCALE).toFloat(),
+                    ((mm.maxLoc.y + t.rows() / 2.0) / SCALE).toFloat()
+                )
+            )
+            // on efface le voisinage pour trouver la correspondance suivante
+            Imgproc.rectangle(
+                res,
+                org.opencv.core.Point(mm.maxLoc.x - t.cols(), mm.maxLoc.y - t.rows()),
+                org.opencv.core.Point(mm.maxLoc.x + t.cols(), mm.maxLoc.y + t.rows()),
+                Scalar(-1.0), -1
+            )
+        }
+        res.release()
+        return out
     }
 
     /** Part de pixels d'une couleur HSV autour d'un point de référence. */
