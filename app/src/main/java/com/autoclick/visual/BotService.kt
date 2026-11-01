@@ -1549,7 +1549,7 @@ class BotService : Service() {
     }
 
     private fun loadDaily() {
-        for (path in listOf("daily/coffre_bulle.png")) {
+        for (path in listOf("daily/coffre_bulle.png", "daily/goutte.png")) {
             val m = loadAsset(path) ?: continue
             farm[path.substringAfter('/').removeSuffix(".png")] = m
         }
@@ -1686,6 +1686,7 @@ class BotService : Service() {
                     if ("aventure" in t && "animal" in t) aventureCy = maxOf(aventureCy, l.cy)
                     if ("provisions" in t) cands.add(Pair(l.cy, "provisions"))
                     if ("avanc" in t) cands.add(Pair(l.cy, "recrute")) // Recruter des Héros : Avancé
+                    if ("fontaine" in t) cands.add(Pair(l.cy, "fontaine")) // Collecte d'Essence d'Eau : Fontaine Vitale
                     if ("triomphe" in t && "activit" in t) cands.add(Pair(l.cy, "triomphe")) // Triomphe d'activité quotidienne
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
                     if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
@@ -1738,6 +1739,7 @@ class BotService : Service() {
             "ORDRES" -> detectOrdres(rgb, now)
             "RECRUTE" -> detectRecrute(rgb, now)
             "TRIOMPHE" -> detectTriomphe(rgb, now)
+            "FONTAINE" -> detectFontaine(screen, rgb, now)
         }
     }
 
@@ -2058,6 +2060,42 @@ class BotService : Service() {
                 dailyTaskDone("Triomphe d'activité quotidienne")
             }
         }
+    }
+
+
+    /**
+     * Fontaine Vitale : on arrive sur « Mon île » ; on touche chaque goutte d'eau (fond blanc et vert, ou tout vert :
+     * on vise la goutte bleue) tant qu'il y en a, puis flèche bleue en haut à gauche.
+     */
+    private fun detectFontaine(screen: Mat, rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Fontaine Vitale abandonnée (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val labels = listOf("conqu", "héros", "heros", "magasin", "alliance").count { it in bar }
+        val drop = farmMatch(screen, "goutte", 0.75)
+        val island = drop != null || (labels >= 2 && "ville" in bar && "monde" !in bar) // sur l'île, le bouton du bas dit « Ville »
+        if (island) {
+            dailyIdleAt = now
+            if (drop != null && dailyBtn < 12) {
+                dailyBtn++
+                dailyGrey = 0
+                dailyStep = 1
+                val (x, y) = farmCenter("goutte", drop)
+                farmClick(x, y, "daily : Fontaine Vitale : clic sur une goutte d'eau ($dailyBtn)")
+            } else if (++dailyGrey >= 2 && (dailyStep >= 1 || now - dailyStepAt > 5_000L)) {
+                lastClick = now
+                backArrow()
+                dailyTaskDone("Fontaine Vitale")
+            }
+            return
+        }
+        if (labels >= 2 && "monde" in bar && dailyStep >= 1) dailyTaskDone("Fontaine Vitale")
     }
 
     /** Part de pixels d'une couleur HSV autour d'un point de référence. */
