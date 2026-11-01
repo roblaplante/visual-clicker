@@ -1673,7 +1673,7 @@ class BotService : Service() {
                         dailyState = "ENLIGNE"
                         dailyStep = 0
                         dailyStepAt = now
-                        clickRef(607.0, rowY + 21, "daily : Récomp. En Ligne : clic sur la coche verte")
+                        clickRef(335.0, rowY + 21, "daily : Récomp. En Ligne : clic sur le texte de la tâche") // le texte déclenche comme la coche
                         launched = true
                         break
                     }
