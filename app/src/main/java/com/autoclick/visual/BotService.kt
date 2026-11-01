@@ -1676,6 +1676,12 @@ class BotService : Service() {
                 } else {
                     // Menu fermé : la languette est visible quand la barre du bas du jeu l'est aussi.
                     if (cityVisible) clickRef(20.0, 1075.0, "daily : ouverture du menu (languette)")
+                    else if (dailyTries % 5 == 0) {
+                        // écran inconnu (reste d'une tâche abandonnée) : flèche retour en haut à gauche
+                        lastClick = now
+                        backArrow()
+                        log("daily : écran inconnu, flèche retour")
+                    }
                 }
             }
             "LIST" -> {
@@ -1773,8 +1779,10 @@ class BotService : Service() {
             return
         }
         // fenêtre des provisions (« Appuie n'importe où pour fermer »)
-        val dlg = ocrRef(rgb, 200, 1680, 880, 1750)
-        if ("fermer" in dlg) {
+        // (reconnue par le bouton orange « 1000 gemmes » de la fenêtre, ou par son texte)
+        val dlgOpen = colorFrac(rgb, 865.0, 1335.0, Scalar(10.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0)) >= 0.25 ||
+            "fermer" in ocrRef(rgb, 200, 1680, 880, 1750)
+        if (dlgOpen) {
             dailyIdleAt = now
             if (colorFrac(rgb, 862.0, 1090.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.3 && dailyBtn < 4) {
                 dailyBtn++
@@ -1818,8 +1826,11 @@ class BotService : Service() {
             return
         }
         // fenêtre « Marché Conclu » (ligne « Nouvelle tentative de Contribution dans … » sous la fenêtre)
-        val dlg = ocrRef(rgb, 100, 1915, 980, 1975)
-        if ("tentative" in dlg || "contribution" in dlg) {
+        // (reconnue par son bouton orange « Contribuer 10 gemmes » : la ligne « Nouvelle tentative » n'existe pas à 25/25)
+        val orange = Scalar(10.0, 150.0, 180.0)
+        val orangeHi = Scalar(25.0, 255.0, 255.0)
+        val dlgOpen = colorFrac(rgb, 315.0, 1795.0, orange, orangeHi) >= 0.25 || ocrRef(rgb, 100, 1915, 980, 1975).let { "tentative" in it || "contribution" in it }
+        if (dlgOpen) {
             dailyIdleAt = now
             if (dailyStep >= 5) {
                 clickRef(960.0, 548.0, "daily : Contrib. d'All. : fenêtre fermée par la croix")
