@@ -1549,7 +1549,7 @@ class BotService : Service() {
     }
 
     private fun loadDaily() {
-        for (path in listOf("daily/coffre_bulle.png", "daily/goutte.png")) {
+        for (path in listOf("daily/coffre_bulle.png", "daily/goutte.png", "daily/golem.png")) {
             val m = loadAsset(path) ?: continue
             farm[path.substringAfter('/').removeSuffix(".png")] = m
         }
@@ -1648,6 +1648,20 @@ class BotService : Service() {
                     clickRef(995.0, 1855.0, "daily : Ordres : point rouge, ouverture des ordres")
                     return
                 }
+                // Puis l'événement « Assaut Rebelle » (golem rouge en haut à gauche, avec son minuteur)
+                val golem = if (cityVisible && (dailyAttempts["combat"] ?: 0) < 2) farmMatch(screen, "golem", 0.8) else null
+                if (golem != null) {
+                    dailyAttempts["combat"] = (dailyAttempts["combat"] ?: 0) + 1
+                    dailyState = "COMBAT"
+                    dailyStep = 1
+                    dailyBtn = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    val (gx, gy) = farmCenter("golem", golem)
+                    farmClick(gx, gy + (60 * w / 1080.0).toFloat(), "daily : Combat : icône Assaut Rebelle, ouverture")
+                    return
+                }
                 val tabs = ocrRef(rgb, 15, 615, 665, 695)
                 val open = "ville" in tabs || "nature" in tabs || "quot" in tabs
                 if (open) {
@@ -1740,6 +1754,7 @@ class BotService : Service() {
             "RECRUTE" -> detectRecrute(rgb, now)
             "TRIOMPHE" -> detectTriomphe(rgb, now)
             "FONTAINE" -> detectFontaine(screen, rgb, now)
+            "COMBAT" -> detectCombat(screen, rgb, now)
         }
     }
 
@@ -2125,6 +2140,62 @@ class BotService : Service() {
         }
         res.release()
         return out
+    }
+
+
+    /**
+     * Combat (Assaut Rebelle) : icône du golem en haut à gauche > fenêtre « Défi Rapide » > écran « Victoire ! »
+     * > « Réclamer les Récompenses ». Vérifié avant chaque tentative, comme les Ordres.
+     */
+    private fun detectCombat(screen: Mat, rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Combat abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // écran « Victoire ! » : bouton Réclamer les Récompenses
+        val vic = ocrRef(rgb, 400, 920, 680, 975, true)
+        if ("compenses" in vic) {
+            dailyIdleAt = now
+            dailyStep = 3
+            clickRef(540.0, 1620.0, "daily : Combat : Réclamer les Récompenses")
+            return
+        }
+        // fenêtre « Assaut Rebelle » : Défi Rapide
+        val defi = ocrRef(rgb, 560, 1640, 950, 1750)
+        if ("rapide" in defi) {
+            dailyIdleAt = now
+            if (dailyBtn < 3) {
+                dailyBtn++
+                dailyStep = 2
+                clickRef(755.0, 1695.0, "daily : Combat : Défi Rapide")
+            }
+            return
+        }
+        val reward = ocrRef(rgb, 200, 2030, 880, 2100)
+        if (dailyStep >= 3 && ("appuie" in reward || "quitter" in reward)) {
+            dailyIdleAt = now
+            clickRef(540.0, 1900.0, "daily : Combat : appui n'importe où")
+            return
+        }
+        // ville : terminé, ou on rouvre l'icône si la fenêtre n'est pas apparue
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val seen = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar }
+        if (seen >= 2) {
+            dailyIdleAt = now
+            if (dailyStep >= 3) {
+                dailyTaskDone("Combat")
+            } else if (dailyStep <= 1 && now - dailyActAt > 3_500L) {
+                val golem = farmMatch(screen, "golem", 0.8)
+                if (golem != null) {
+                    dailyActAt = now
+                    val (gx, gy) = farmCenter("golem", golem)
+                    farmClick(gx, gy + (60 * w / 1080.0).toFloat(), "daily : Combat : nouveau clic sur l'icône")
+                }
+            }
+        }
     }
 
     /** Part de pixels d'une couleur HSV autour d'un point de référence. */
