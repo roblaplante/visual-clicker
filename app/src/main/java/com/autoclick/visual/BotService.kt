@@ -1634,6 +1634,20 @@ class BotService : Service() {
         when (dailyState) {
             "OPEN" -> {
                 if (++dailyTries > 20) { dailyFinish("menu de gauche introuvable"); return }
+                // Avant chaque tentative : l'icône « Ordres » (balance, en bas à droite) a-t-elle un point rouge ?
+                val barText = ocrRef(rgb, 0, 2270, 1080, 2335)
+                val cityVisible = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in barText } >= 2
+                if (cityVisible && (dailyAttempts["ordres"] ?: 0) < 2 && redDotOnOrders(rgb)) {
+                    dailyAttempts["ordres"] = (dailyAttempts["ordres"] ?: 0) + 1
+                    dailyState = "ORDRES"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    clickRef(995.0, 1855.0, "daily : Ordres : point rouge, ouverture des ordres")
+                    return
+                }
                 val tabs = ocrRef(rgb, 15, 615, 665, 695)
                 val open = "ville" in tabs || "nature" in tabs || "quot" in tabs
                 if (open) {
@@ -1647,9 +1661,7 @@ class BotService : Service() {
                     }
                 } else {
                     // Menu fermé : la languette est visible quand la barre du bas du jeu l'est aussi.
-                    val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
-                    val seen = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar }
-                    if (seen >= 2) clickRef(20.0, 1075.0, "daily : ouverture du menu (languette)")
+                    if (cityVisible) clickRef(20.0, 1075.0, "daily : ouverture du menu (languette)")
                 }
             }
             "LIST" -> {
@@ -1720,6 +1732,7 @@ class BotService : Service() {
             "AVENTURE" -> detectAventure(rgb, now)
             "PROVISIONS" -> detectProvisions(rgb, now)
             "CONTRIB" -> detectContrib(rgb, now)
+            "ORDRES" -> detectOrdres(rgb, now)
         }
     }
 
@@ -1841,6 +1854,108 @@ class BotService : Service() {
                 dailyActAt = now
                 dailyStep = 1
                 clickRef(803.0, 2240.0, "daily : Contrib. d'All. : clic Alliance (barre du bas)")
+            }
+        }
+    }
+
+
+    /** Point rouge sur l'icône « Ordres » (balance) en bas à droite de la ville. */
+    private fun redDotOnOrders(rgb: Mat): Boolean =
+        colorFrac(rgb, 1040.0, 1805.0, Scalar(0.0, 150.0, 180.0), Scalar(8.0, 255.0, 255.0), 14) +
+            colorFrac(rgb, 1040.0, 1805.0, Scalar(172.0, 150.0, 180.0), Scalar(179.0, 255.0, 255.0), 14) > 0.2
+
+    /** Part de pixels clairs et peu colorés (bandeau « Actif » / « Se recharge » sur un livre). */
+    private fun lightFrac(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Double {
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bx = minOf((x1 * sc).toInt(), rgb.cols())
+        val by = minOf((y1 * sc).toInt(), rgb.rows())
+        if (bx <= ax || by <= ay) return 0.0
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(ax, ay, bx - ax, by - ay)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, Scalar(0.0, 0.0, 200.0), Scalar(179.0, 90.0, 255.0), m)
+        val f = Core.countNonZero(m).toDouble() / (m.rows() * m.cols())
+        hsv.release(); m.release()
+        return f
+    }
+
+    // livres de l'écran « Ordre du Gouverneur » à activer, dans l'ordre : x, y du livre puis zone du bandeau
+    private val ordresBooks = listOf(
+        intArrayOf(330, 1680, 200, 1655, 470, 1715), // Journée de la Productivité
+        intArrayOf(740, 790, 610, 760, 880, 820), // Travail Urgent
+        intArrayOf(740, 1680, 610, 1655, 880, 1715) // Festivités
+    )
+
+    /**
+     * Ordres : icône (balance) > « Ordre du Gouverneur » > pour chaque livre (Productivité, Travail Urgent,
+     * Festivités) sans bandeau « Actif » / « Se recharge » : livre > « Aventure » > (récompenses) ; puis flèche
+     * bleue pour revenir à la ville.
+     */
+    private fun detectOrdres(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Ordres abandonnés (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // écran « Récompenses » : appuyer n'importe où
+        val reward = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in reward || "quitter" in reward) {
+            dailyIdleAt = now
+            clickRef(540.0, 1700.0, "daily : Ordres : récompenses : appui n'importe où")
+            return
+        }
+        // page d'un décret (« Effet du Décret ») : bouton Aventure
+        val eff = ocrRef(rgb, 200, 1225, 830, 1275, true)
+        if ("effet" in eff || "cret" in eff) {
+            dailyIdleAt = now
+            if (dailyBtn == 0) {
+                dailyBtn = 1
+                dailyStep++
+                clickRef(540.0, 1635.0, "daily : Ordres : clic Aventure")
+            } else {
+                dailyBtn = 0
+                lastClick = now
+                backArrow()
+                log("daily : Ordres : retour à la liste des ordres")
+            }
+            return
+        }
+        // liste « Ordre du Gouverneur »
+        val title = ocrRef(rgb, 300, 430, 780, 490)
+        if ("gouverneur" in title) {
+            dailyIdleAt = now
+            dailyBtn = 0
+            if (dailyStep >= ordresBooks.size) {
+                lastClick = now
+                backArrow()
+                log("daily : Ordres : tous les ordres vus, retour à la ville")
+                return
+            }
+            val b = ordresBooks[dailyStep]
+            if (lightFrac(rgb, b[2], b[3], b[4], b[5]) >= 0.3) {
+                log("daily : Ordres : livre ${dailyStep + 1} déjà actif ou en recharge, on passe")
+                dailyStep++
+            } else if (now - dailyActAt > 3_000L) {
+                dailyActAt = now
+                clickRef(b[0].toDouble(), b[1].toDouble(), "daily : Ordres : ouverture du livre ${dailyStep + 1}")
+            }
+            return
+        }
+        // ville
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val seen = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar }
+        if (seen >= 2) {
+            dailyIdleAt = now
+            if (dailyStep >= ordresBooks.size) {
+                dailyTaskDone("Ordres")
+            } else if (now - dailyActAt > 3_500L) {
+                dailyActAt = now
+                clickRef(995.0, 1855.0, "daily : Ordres : ouverture des ordres")
             }
         }
     }
