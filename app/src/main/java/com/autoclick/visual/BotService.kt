@@ -1686,6 +1686,7 @@ class BotService : Service() {
                     if ("aventure" in t && "animal" in t) aventureCy = maxOf(aventureCy, l.cy)
                     if ("provisions" in t) cands.add(Pair(l.cy, "provisions"))
                     if ("avanc" in t) cands.add(Pair(l.cy, "recrute")) // Recruter des Héros : Avancé
+                    if ("triomphe" in t && "activit" in t) cands.add(Pair(l.cy, "triomphe")) // Triomphe d'activité quotidienne
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
                     if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
                 }
@@ -1694,7 +1695,7 @@ class BotService : Service() {
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
                 for ((cy, key) in cands) {
-                    if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 4 else 2)) continue // 3 recrutements gratuits par jour
+                    if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 1 else 2)) continue // un seul recrutement gratuit par passage
                     val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence
                     dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
                     dailyState = key.uppercase()
@@ -1736,6 +1737,7 @@ class BotService : Service() {
             "CONTRIB" -> detectContrib(rgb, now)
             "ORDRES" -> detectOrdres(rgb, now)
             "RECRUTE" -> detectRecrute(rgb, now)
+            "TRIOMPHE" -> detectTriomphe(rgb, now)
         }
     }
 
@@ -1992,7 +1994,7 @@ class BotService : Service() {
         val recruit = ocrRef(rgb, 40, 2110, 560, 2165, true)
         if ("prochain" in recruit || "gratuit" in recruit) {
             dailyIdleAt = now
-            if (colorFrac(rgb, 287.0, 1690.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.3 && dailyBtn < 4) {
+            if (dailyStep == 0 && colorFrac(rgb, 287.0, 1690.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.3 && dailyBtn < 1) {
                 dailyBtn++
                 dailyStep = 1
                 clickRef(287.0, 1690.0, "daily : Recrutement avancé : clic Recruter une fois (gratuit) n°$dailyBtn")
@@ -2000,7 +2002,7 @@ class BotService : Service() {
                 dailyStep = 3
                 lastClick = now
                 backArrow()
-                log("daily : Recrutement : plus de recrutement gratuit, retour")
+                log("daily : Recrutement : un seul recrutement par passage, retour")
             }
             return
         }
@@ -2017,6 +2019,44 @@ class BotService : Service() {
             dailyTries++
             dailyIdleAt = now
             clickRef(260.0, 300.0, "daily : Recrutement : animation, clic en haut de l'écran")
+        }
+    }
+
+
+    /**
+     * Triomphe d'activité quotidienne : écran « Triomphe d'Activité » > coffre individuel (point rouge) > écran
+     * « Récompenses » (appui n'importe où) > flèche bleue en haut à gauche.
+     */
+    private fun detectTriomphe(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Triomphe d'activité abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        val reward = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in reward || "quitter" in reward) {
+            dailyIdleAt = now
+            dailyStep = 2
+            clickRef(540.0, 1500.0, "daily : Triomphe : récompenses : appui n'importe où")
+            return
+        }
+        val title = ocrRef(rgb, 140, 90, 760, 200)
+        if ("activit" in title) {
+            dailyIdleAt = now
+            val dot = colorFrac(rgb, 1040.0, 1618.0, Scalar(0.0, 150.0, 180.0), Scalar(8.0, 255.0, 255.0), 14) +
+                colorFrac(rgb, 1040.0, 1618.0, Scalar(172.0, 150.0, 180.0), Scalar(179.0, 255.0, 255.0), 14)
+            if (dailyStep < 2 && dot > 0.2 && now - dailyActAt > 3_000L) {
+                dailyActAt = now
+                dailyStep = 1
+                clickRef(180.0, 1730.0, "daily : Triomphe : clic sur le coffre individuel")
+            } else if (dailyStep >= 2 || dot <= 0.2) {
+                lastClick = now
+                backArrow()
+                dailyTaskDone("Triomphe d'activité quotidienne")
+            }
         }
     }
 
