@@ -1538,6 +1538,7 @@ class BotService : Service() {
     private var dailyTries = 0
     private var dailyBtn = 0 // clics répétés sur un même bouton (évite de rester bloqué)
     private var dailyActAt = 0L
+    private var dailyIdleAt = 0L // dernier instant où un écran connu a été reconnu : au-delà de 10 s sans rien, on abandonne
     private var dailyFinished = false
     private val dailyAttempts = HashMap<String, Int>()
 
@@ -1682,6 +1683,7 @@ class BotService : Service() {
                     dailyStep = 0
                     dailyBtn = 0
                     dailyActAt = 0L
+                    dailyIdleAt = now
                     dailyStepAt = now
                     clickRef(335.0, rowY + 21, "daily : $key : clic sur le texte de la tâche") // le texte déclenche comme la coche
                     launched = true
@@ -1720,8 +1722,8 @@ class BotService : Service() {
      * « Récupérer » > croix rouge > flèche bleue en haut à gauche.
      */
     private fun detectProvisions(rgb: Mat, now: Long) {
-        if (now - dailyStepAt > 60_000L) {
-            log("daily : Provisions de voyage abandonnée (1 min sans finir)")
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Provisions de voyage abandonnée (10 s sans écran reconnu)")
             lastClick = now
             backArrow()
             dailyState = "OPEN"
@@ -1731,6 +1733,7 @@ class BotService : Service() {
         // fenêtre des provisions (« Appuie n'importe où pour fermer »)
         val dlg = ocrRef(rgb, 200, 1680, 880, 1750)
         if ("fermer" in dlg) {
+            dailyIdleAt = now
             if (colorFrac(rgb, 862.0, 1090.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.3 && dailyBtn < 4) {
                 dailyBtn++
                 dailyStep = 2
@@ -1744,6 +1747,7 @@ class BotService : Service() {
         // écran du Voyage (panneaux « Terres perdues » / « Voyage dans le royaume »)
         val signs = ocrRef(rgb, 40, 1000, 330, 1100) + " " + ocrRef(rgb, 780, 1110, 1060, 1200)
         if ("perdue" in signs || "royaume" in signs) {
+            dailyIdleAt = now
             if (dailyStep >= 2) {
                 lastClick = now
                 backArrow()
@@ -1784,8 +1788,8 @@ class BotService : Service() {
      * Trésor d'Allié > Récupérer Tout > récompenses > clic dans le vide ; sinon flèche bleue en haut à gauche.
      */
     private fun detectAventure(rgb: Mat, now: Long) {
-        if (now - dailyStepAt > 120_000L) {
-            log("daily : Aventure Animalière abandonnée (2 min sans finir)")
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Aventure Animalière abandonnée (10 s sans écran reconnu)")
             lastClick = now
             backArrow()
             dailyState = "OPEN"
@@ -1795,12 +1799,14 @@ class BotService : Service() {
         // écran « Récompenses » : appuyer n'importe où
         val reward = ocrRef(rgb, 200, 2150, 880, 2240)
         if ("appuie" in reward || "quitter" in reward) {
+            dailyIdleAt = now
             clickRef(540.0, 1700.0, "daily : récompenses : appui n'importe où")
             return
         }
         // fenêtre « Trésor d'Allié » : Récupérer Tout s'il y en a, sinon clic dans le vide pour la fermer
         val tres = ocrRef(rgb, 200, 785, 880, 855, true)
         if ("clamer" in tres || "restant" in tres) {
+            dailyIdleAt = now
             if (colorFrac(rgb, 540.0, 1830.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.2) {
                 clickRef(540.0, 1830.0, "daily : Trésor d'Allié : Récupérer Tout")
             } else {
@@ -1811,6 +1817,7 @@ class BotService : Service() {
         // écran de l'Aventure Animalière
         val hdr = ocrRef(rgb, 150, 245, 930, 325)
         if ("tentative" in hdr) {
+            dailyIdleAt = now
             val green = colorFrac(rgb, 540.0, 2040.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0))
             val cyan = colorFrac(rgb, 540.0, 2040.0, Scalar(86.0, 60.0, 120.0), Scalar(105.0, 255.0, 255.0))
             when {
