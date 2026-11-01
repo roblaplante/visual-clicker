@@ -2035,7 +2035,7 @@ class BotService : Service() {
         if (dailyStep >= 1 && dailyTries < 12) {
             dailyTries++
             dailyIdleAt = now
-            clickRef(260.0, 300.0, "daily : Recrutement : animation, clic en haut de l'écran")
+            clickRef(700.0, 330.0, "daily : Recrutement : animation, clic en haut de l'écran") // pas à gauche : le bouton ▶ y est
         }
     }
 
