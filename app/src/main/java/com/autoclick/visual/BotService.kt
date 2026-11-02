@@ -1793,6 +1793,7 @@ class BotService : Service() {
                 val cands = ArrayList<Pair<Double, String>>()
                 var aventureCy = -1.0
                 var contribCy = -1.0
+                var creusetCy = -1.0
                 for (l in lines) {
                     val t = l.text.lowercase()
                     if ("ligne" in t) cands.add(Pair(l.cy, "enligne"))
@@ -1802,11 +1803,13 @@ class BotService : Service() {
                     if ("avanc" in t) cands.add(Pair(l.cy, "recrute")) // Recruter des Héros : Avancé
                     if ("fontaine" in t) cands.add(Pair(l.cy, "fontaine")) // Collecte d'Essence d'Eau : Fontaine Vitale
                     if ("inactiv" in t) cands.add(Pair(l.cy, "conquete")) // Conquérir : Revenu d'inactivité
+                    if ("creuset" in t || "creuseur" in t) creusetCy = maxOf(creusetCy, l.cy) // titre de section puis tâche : la plus basse
                     if ("triomphe" in t && "activit" in t) cands.add(Pair(l.cy, "triomphe")) // Triomphe d'activité quotidienne
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
                     if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
                 }
                 if (contribCy >= 0) cands.add(Pair(contribCy, "contrib"))
+                if (creusetCy >= 0) cands.add(Pair(creusetCy, "creuset"))
                 if (aventureCy >= 0) cands.add(Pair(aventureCy, "aventure"))
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
@@ -1859,6 +1862,7 @@ class BotService : Service() {
             "CONQUETE" -> detectConquete(rgb, now)
             "MISSIONS" -> detectMissions(rgb, now)
             "COFFRES" -> detectCoffres(rgb, now)
+            "CREUSET" -> detectCreuset(rgb, now)
         }
     }
 
@@ -2527,6 +2531,38 @@ class BotService : Service() {
     private fun redDotAt(rgb: Mat, x: Double, y: Double): Boolean =
         colorFrac(rgb, x, y, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0), 16) +
             colorFrac(rgb, x, y, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0), 16) > 0.2
+
+
+    /**
+     * Creuset en or véritable : écran du creuset > « Raffiner » touché 6 fois (aucun écran entre deux touches), ou moins si le
+     * bouton devient gris (« Restant du jour : 0 ») > flèche bleue en haut à gauche.
+     */
+    private fun detectCreuset(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Creuset abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        val title = ocrRef(rgb, 140, 100, 700, 190)
+        if ("creuset" in title || "ritable" in title) {
+            dailyIdleAt = now
+            val cyan = colorRect(rgb, 327, 1940, 752, 2055, Scalar(86.0, 90.0, 120.0), Scalar(105.0, 255.0, 255.0))
+            if (cyan >= 0.3 && dailyBtn < 6) {
+                dailyBtn++
+                dailyStep = 1
+                clickRef(540.0, 1995.0, "daily : Creuset : Raffiner ($dailyBtn/6)")
+            } else if (dailyBtn >= 6 || ++dailyGrey >= 2) {
+                lastClick = now
+                backArrow()
+                log("daily : Creuset : fin (touches $dailyBtn, bouton ${if (cyan >= 0.3) "cyan" else "gris"}), flèche retour")
+                dailyStep = 5
+                dailyTaskDone("Creuset en or véritable")
+            }
+        }
+    }
 
     /** Part de pixels d'une couleur HSV dans un rectangle (coordonnées de référence 1080 px). */
     private fun colorRect(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int, lo: Scalar, hi: Scalar): Double {
