@@ -2172,13 +2172,21 @@ class BotService : Service() {
         val title = ocrRef(rgb, 140, 90, 760, 200)
         if ("activit" in title) {
             dailyIdleAt = now
+            if (now - dailyActAt <= 3_000L) return // on laisse le temps à l'écran « Récompenses » d'apparaître
+            val line = ocrRef(rgb, 100, 1360, 980, 1430)
+            // coffre hebdomadaire du haut : « Récompenses récupérables » (au lieu de « Récomp. Actuelles »)
+            val weekly = ("compens" in line || "cuper" in line) && "actuel" !in line
             val dot = colorFrac(rgb, 1040.0, 1618.0, Scalar(0.0, 150.0, 180.0), Scalar(8.0, 255.0, 255.0), 14) +
                 colorFrac(rgb, 1040.0, 1618.0, Scalar(172.0, 150.0, 180.0), Scalar(179.0, 255.0, 255.0), 14)
-            if (dailyStep < 2 && dot > 0.2 && now - dailyActAt > 3_000L) {
+            if (weekly && dailyBtn < 1) {
+                dailyBtn++
                 dailyActAt = now
-                dailyStep = 1
+                clickRef(540.0, 950.0, "daily : Triomphe : coffre du haut (récompenses récupérables)")
+            } else if (dot > 0.2 && dailyGrey < 1) {
+                dailyGrey++
+                dailyActAt = now
                 clickRef(180.0, 1730.0, "daily : Triomphe : clic sur le coffre individuel")
-            } else if (dailyStep >= 2 || dot <= 0.2) {
+            } else {
                 lastClick = now
                 backArrow()
                 dailyTaskDone("Triomphe d'activité quotidienne")
