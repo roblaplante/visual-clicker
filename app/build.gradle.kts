@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val buildNo = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toIntOrNull() ?: 0
+
 android {
     namespace = "com.autoclick.visual"
     compileSdk = 34
@@ -11,8 +13,8 @@ android {
         applicationId = "com.autoclick.visual"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = maxOf(buildNo, 1)
+        versionName = "1.$buildNo"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 

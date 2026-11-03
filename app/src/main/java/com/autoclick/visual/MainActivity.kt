@@ -186,6 +186,16 @@ class MainActivity : AppCompatActivity() {
                     "Pour tout arrêter, touchez la notification."
             )
         )
+        val version = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+        } catch (e: Exception) { "?" }
+        root.addView(TextView(this).apply {
+            text = "v$version"
+            textSize = 11f
+            alpha = 0.45f
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            setPadding(0, pad * 2, 0, 0)
+        })
     }
 
     // ---------- Réglages communs ----------
