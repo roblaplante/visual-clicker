@@ -1823,6 +1823,7 @@ class BotService : Service() {
                     dailyGrey = 0
                     dailyTries = 0
                     dailyActAt = 0L
+                    dropSeenAt = now
                     dailyIdleAt = now
                     dailyStepAt = now
                     clickRef(335.0, rowY + 21, "daily : $key : clic sur le texte de la tâche") // le texte déclenche comme la coche
@@ -2274,7 +2275,9 @@ class BotService : Service() {
         val labels = listOf("conqu", "héros", "heros", "magasin", "alliance").count { it in bar }
         val drops = findAllCenters(screen, "goutte", 0.75)
         val drop = drops.maxByOrNull { it.second }
-        val island = drop != null || (labels >= 2 && "ville" in bar && "monde" !in bar)
+        if (drop != null) dropSeenAt = now
+        val title = ocrRef(rgb, 130, 90, 500, 200)
+        val island = drop != null || (labels >= 2 && "ville" in bar && "monde" !in bar) || "mon" in title && "le" in title
         if (island) {
             dailyIdleAt = now
             if (dailyStep >= 20) { // retour de Conquête : on sort aussi de l'île
@@ -2286,15 +2289,30 @@ class BotService : Service() {
                 dailyGrey = 0
                 dailyStep = 1
                 farmClick(drop.first, drop.second, "daily : Fontaine Vitale : clic sur une goutte d'eau ($dailyBtn sur ${drops.size} vue(s))")
-            } else if (++dailyGrey >= 2 && dailyStep < 10 && (dailyStep >= 1 || now - dailyStepAt > 5_000L)) {
+            } else if (dailyStep < 10 && now - dropSeenAt > 2_000L && (dailyStep >= 1 || now - dailyStepAt > 5_000L)) {
+                // plus de goutte depuis 2 s : on touche l'icône des épées croisées (Conquête), en bas à gauche
                 dailyStep = 10
                 dailyBtn = 0
-                clickRef(108.0, 2290.0, "daily : Fontaine Vitale : plus de goutte, clic sur Conquête")
+                clickRef(108.0, 2245.0, "daily : Fontaine Vitale : plus de goutte, clic sur Conquête (épées croisées)")
             }
             return
         }
+        // île non reconnue : si les gouttes sont finies, on touche quand même Conquête (barre du bas lisible)
+        if (dailyStep in 1..9 && now - dropSeenAt > 3_000L && "conqu" in bar) {
+            dailyStep = 10
+            dailyBtn = 0
+            clickRef(108.0, 2245.0, "daily : Fontaine Vitale : île non reconnue, clic sur Conquête (épées croisées)")
+            return
+        }
         if (labels >= 2 && "monde" in bar && dailyStep >= 1) dailyTaskDone("Fontaine Vitale")
+        else if (now - dailyStepAt > 6_000L && now - lastFontLog > 3_000L) {
+            lastFontLog = now
+            log("daily : Fontaine Vitale : écran non reconnu (barre lue « ${bar.replace('\n', ' ').take(60)} »)")
+        }
     }
+
+    private var dropSeenAt = 0L
+    private var lastFontLog = 0L
 
     /**
      * Combat (Assaut Rebelle) : icône du golem en haut à gauche > fenêtre « Défi Rapide » > écran « Victoire ! »
