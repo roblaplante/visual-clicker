@@ -1695,7 +1695,7 @@ class BotService : Service() {
             val rw = ocrRef(rgb, 200, 2150, 880, 2240)
             if ("appuie" in rw || "quitter" in rw) {
                 dailyIdleAt = now
-                clickRef(540.0, 1700.0, "daily : écran Récompenses resté ouvert : appui n'importe où")
+                tapRewards("daily : écran Récompenses resté ouvert : appui n'importe où")
                 return
             }
         }
@@ -2041,7 +2041,7 @@ class BotService : Service() {
         val reward = ocrRef(rgb, 200, 2150, 880, 2240)
         if ("appuie" in reward || "quitter" in reward) {
             dailyIdleAt = now
-            clickRef(540.0, 1700.0, "daily : Ordres : récompenses : appui n'importe où")
+            tapRewards("daily : Ordres : récompenses : appui n'importe où")
             return
         }
         // page d'un décret (« Effet du Décret ») : bouton Aventure
@@ -2170,7 +2170,7 @@ class BotService : Service() {
         if ("appuie" in reward || "quitter" in reward) {
             dailyIdleAt = now
             dailyStep = 2
-            clickRef(540.0, 1500.0, "daily : Triomphe : récompenses : appui n'importe où")
+            tapRewards("daily : Triomphe : récompenses : appui n'importe où")
             return
         }
         val title = ocrRef(rgb, 140, 90, 760, 200)
@@ -2209,7 +2209,7 @@ class BotService : Service() {
         val bottom = ocrRef(rgb, 200, 2150, 880, 2240)
         if ("appuie" in bottom || "quitter" in bottom) {
             dailyIdleAt = now
-            clickRef(540.0, 730.0, "daily : Conquête : récompenses (bandeau jaune)")
+            tapRewards("daily : Conquête : récompenses (bandeau jaune)")
             return true
         }
         if (colorFrac(rgb, 540.0, 1635.0, green, greenHi) >= 0.25) {
@@ -2330,7 +2330,7 @@ class BotService : Service() {
         val reward = ocrRef(rgb, 200, 2030, 880, 2100)
         if (dailyStep >= 3 && ("appuie" in reward || "quitter" in reward)) {
             dailyIdleAt = now
-            clickRef(540.0, 1900.0, "daily : Combat : appui n'importe où")
+            tapRewards("daily : Combat : appui n'importe où")
             return
         }
         // ville : terminé, ou on rouvre l'icône si la fenêtre n'est pas apparue
@@ -2403,7 +2403,7 @@ class BotService : Service() {
         if ("appuie" in bottom || "quitter" in bottom) {
             dailyIdleAt = now
             dailyStep = maxOf(dailyStep, 1)
-            clickRef(540.0, 1700.0, "daily : Missions quotidiennes : récompenses : appui n'importe où")
+            tapRewards("daily : Missions quotidiennes : récompenses : appui n'importe où")
             return
         }
         val tabs = ocrRef(rgb, 180, 1920, 900, 1990, true)
@@ -2459,7 +2459,7 @@ class BotService : Service() {
         val bottom = ocrRef(rgb, 200, 2150, 880, 2240)
         if ("appuie" in bottom || "quitter" in bottom) {
             dailyIdleAt = now
-            clickRef(540.0, 1700.0, "daily : Coffres : récompenses : appui n'importe où")
+            tapRewards("daily : Coffres : récompenses : appui n'importe où")
             return
         }
         // fenêtre « Récompense de Caisse d'Honneur » (coffre touché sans bulle rouge) : clic dans le vide en haut
@@ -2564,6 +2564,20 @@ class BotService : Service() {
         }
     }
 
+    private var rewardTaps = 0
+
+    /**
+     * Écran « Récompenses » : on touche d'abord le bandeau jaune (c'est là que vos essais ont marché), puis, si l'écran
+     * reste, on alterne avec d'autres points (haut de l'écran, bas de l'écran) : sur les gros lots, un toucher trop tôt
+     * ou sur une icône peut ne pas fermer l'écran.
+     */
+    private fun tapRewards(msg: String) {
+        val pts = listOf(540.0 to 730.0, 540.0 to 420.0, 540.0 to 1900.0)
+        val (x, y) = pts[rewardTaps % pts.size]
+        rewardTaps++
+        clickRef(x, y, "$msg (point ${(rewardTaps - 1) % pts.size + 1})")
+    }
+
     /** Part de pixels d'une couleur HSV dans un rectangle (coordonnées de référence 1080 px). */
     private fun colorRect(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int, lo: Scalar, hi: Scalar): Double {
         val sc = rgb.cols() / 1080.0
@@ -2621,7 +2635,7 @@ class BotService : Service() {
         val reward = ocrRef(rgb, 200, 2150, 880, 2240)
         if ("appuie" in reward || "quitter" in reward) {
             dailyIdleAt = now
-            clickRef(540.0, 1700.0, "daily : récompenses : appui n'importe où")
+            tapRewards("daily : récompenses : appui n'importe où")
             return
         }
         // fenêtre « Trésor d'Allié » onglet « Mes partages » : bouton « Partager » (avec point rouge) puis croix en haut à droite
