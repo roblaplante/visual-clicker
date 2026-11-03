@@ -18,6 +18,15 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("visualclicker.keystore")
+            storePassword = "visualclicker"
+            keyAlias = "visualclicker"
+            keyPassword = "visualclicker"
+        }
+    }
+
     buildTypes {
         release { isMinifyEnabled = false }
     }
