@@ -2557,7 +2557,7 @@ class BotService : Service() {
             if (dailyStep >= 5) {
                 lastClick = now
                 backArrow()
-                dailyTaskDone("Coffres d'alliance")
+                coffresDone()
             } else if (now - dailyActAt > 3_000L) {
                 dailyActAt = now
                 clickRef(790.0, 1100.0, "daily : Coffres : clic Caisses")
@@ -2568,12 +2568,18 @@ class BotService : Service() {
         val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
         if (listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar } >= 2) {
             dailyIdleAt = now
-            if (dailyStep >= 5) dailyTaskDone("Coffres d'alliance")
+            if (dailyStep >= 5) coffresDone()
             else if (dailyStep == 0 && now - dailyActAt > 3_500L) {
                 dailyActAt = now
                 clickRef(803.0, 2240.0, "daily : Coffres : nouveau clic Alliance")
             }
         }
+    }
+
+    /** Coffres terminés : une seule visite par passage (le chiffre rouge d'Alliance peut rester pour d'autres raisons). */
+    private fun coffresDone() {
+        dailyAttempts["coffres"] = 2
+        dailyTaskDone("Coffres d'alliance")
     }
 
     /** Pastille rouge autour d'un point de référence. */
