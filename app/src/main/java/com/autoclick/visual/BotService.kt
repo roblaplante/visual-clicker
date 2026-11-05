@@ -2624,8 +2624,8 @@ class BotService : Service() {
 
     private val shopCols = intArrayOf(45, 392, 740)       // bord gauche des cartes (référence 1080 px)
     private val shopRows = intArrayOf(1035, 1468)         // haut de la bande du prix
-    private val shopCx = intArrayOf(190, 540, 887)        // centre des icônes d'objet
-    private val shopCy = intArrayOf(870, 1300)
+    private val shopCx = intArrayOf(193, 540, 887)        // centre de la bande du prix (toucher le prix ouvre « Acheter »)
+    private val shopCy = intArrayOf(1070, 1503)
     private var shopSig = ""
     private var shopWaitUntil = 0L
     private var shopBuys = 0
