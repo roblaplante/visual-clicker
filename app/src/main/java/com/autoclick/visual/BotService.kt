@@ -42,6 +42,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
 import org.opencv.core.Core
+import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.core.Scalar
@@ -1794,6 +1795,7 @@ class BotService : Service() {
                 var aventureCy = -1.0
                 var contribCy = -1.0
                 var creusetCy = -1.0
+                var marchandCy = -1.0
                 for (l in lines) {
                     val t = l.text.lowercase()
                     if ("ligne" in t) cands.add(Pair(l.cy, "enligne"))
@@ -1804,12 +1806,14 @@ class BotService : Service() {
                     if ("fontaine" in t) cands.add(Pair(l.cy, "fontaine")) // Collecte d'Essence d'Eau : Fontaine Vitale
                     if ("inactiv" in t) cands.add(Pair(l.cy, "conquete")) // Conquérir : Revenu d'inactivité
                     if ("creuset" in t || "creuseur" in t) creusetCy = maxOf(creusetCy, l.cy) // titre de section puis tâche : la plus basse
+                    if ("nomade" in t || "marchand" in t || "magasin" in t) marchandCy = maxOf(marchandCy, l.cy) // Magasin nomade
                     if ("triomphe" in t && "activit" in t) cands.add(Pair(l.cy, "triomphe")) // Triomphe d'activité quotidienne
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
                     if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
                 }
                 if (contribCy >= 0) cands.add(Pair(contribCy, "contrib"))
                 if (creusetCy >= 0) cands.add(Pair(creusetCy, "creuset"))
+                if (marchandCy >= 0) cands.add(Pair(marchandCy, "marchand"))
                 if (aventureCy >= 0) cands.add(Pair(aventureCy, "aventure"))
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
@@ -1826,6 +1830,7 @@ class BotService : Service() {
                     dropSeenAt = now
                     dailyIdleAt = now
                     dailyStepAt = now
+                    if (key == "marchand") resetShop()
                     clickRef(335.0, rowY + 21, "daily : $key : clic sur le texte de la tâche") // le texte déclenche comme la coche
                     launched = true
                     break
@@ -1864,6 +1869,7 @@ class BotService : Service() {
             "MISSIONS" -> detectMissions(rgb, now)
             "COFFRES" -> detectCoffres(rgb, now)
             "CREUSET" -> detectCreuset(rgb, now)
+            "MARCHAND" -> detectMarchand(rgb, now)
         }
     }
 
@@ -2580,6 +2586,184 @@ class BotService : Service() {
                 dailyTaskDone("Creuset en or véritable")
             }
         }
+    }
+
+
+    // ---------- Magasin nomade ----------
+
+    private val shopCols = intArrayOf(45, 392, 740)       // bord gauche des cartes (référence 1080 px)
+    private val shopRows = intArrayOf(1035, 1468)         // haut de la bande du prix
+    private val shopCx = intArrayOf(190, 540, 887)        // centre des icônes d'objet
+    private val shopCy = intArrayOf(870, 1300)
+    private var shopSig = ""
+    private var shopWaitUntil = 0L
+    private var shopBuys = 0
+    private var shopOpened = -1
+    private var shopUnknownAt = 0L
+    private var shopSkipSig = Array(6) { "" }
+    private var shopReads: List<Pair<Char, Int>> = emptyList()
+
+    private fun resetShop() {
+        shopSig = ""; shopWaitUntil = 0L; shopBuys = 0; shopOpened = -1; shopUnknownAt = 0L
+        shopSkipSig = Array(6) { "" }
+        shopReads = emptyList()
+    }
+
+    private fun digitsOf(s: String): Int {
+        val d = s.filter { it.isDigit() }
+        return if (d.isEmpty() || d.length > 7) -1 else d.toInt()
+    }
+
+    /**
+     * Prix d'une case du magasin : ('g', valeur) = en cristaux bleus (valeur -1 si illisible), ('r', 0) = en ressources
+     * (pain, bois, pierre, fer : il y a un nombre mais pas de cristal bleu), ('?', -1) = case vide / en transition.
+     */
+    private fun shopRead(rgb: Mat, slot: Int): Pair<Char, Int> {
+        val x0 = shopCols[slot % 3]
+        val y0 = shopRows[slot / 3]
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bw = (295 * sc).toInt()
+        val bh = (75 * sc).toInt()
+        if (ax + bw > rgb.cols() || ay + bh > rgb.rows()) return Pair('?', -1)
+        val strip = Mat(rgb, Rect(ax, ay, bw, bh))
+        val hsv = Mat()
+        Imgproc.cvtColor(strip, hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, Scalar(95.0, 130.0, 120.0), Scalar(125.0, 255.0, 255.0), m)
+        val blue = Core.countNonZero(m)
+        var xb = -1
+        if (blue > 0.012 * bw * bh) {
+            val cs = Mat()
+            Core.reduce(m, cs, 0, Core.REDUCE_SUM, CvType.CV_32S)
+            val arr = IntArray(bw)
+            cs.get(0, 0, arr)
+            for (i in bw - 1 downTo 0) if (arr[i] >= 255 * 3) { xb = i; break }
+            cs.release()
+        }
+        hsv.release(); m.release()
+        if (xb >= 0) {
+            val sx = minOf(xb + 4, bw - 12)
+            val num = Mat(strip, Rect(sx, 0, bw - sx, bh))
+            var v = -1
+            for (dark in listOf(true, false)) {
+                v = digitsOf(ocrText(num, dark))
+                if (v >= 0) break
+            }
+            return Pair('g', v)
+        }
+        for (dark in listOf(true, false)) {
+            if (digitsOf(ocrText(strip, dark)) >= 0) return Pair('r', 0)
+        }
+        return Pair('?', -1)
+    }
+
+    /**
+     * Magasin nomade : on achète tout sauf ce qui coûte plus de 65 cristaux bleus (les objets payés en ressources sont
+     * toujours achetés). Quand les 6 cases sont bloquées par des objets à plus de 65 cristaux, on touche « Actualisation
+     * Gratuite » (bouton vert en haut à droite) et on recommence, jusqu'à ce que ce bouton devienne orange (payant).
+     */
+    private fun detectMarchand(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Marchand nomade abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // Fenêtre « Acheter » (bouton orange au centre, prix lu une seconde fois)
+        val dlg = colorRect(rgb, 330, 1435, 750, 1535, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0)) >= 0.35
+        if (dlg) {
+            dailyIdleAt = now
+            val gem = colorRect(rgb, 450, 1440, 560, 1530, Scalar(95.0, 130.0, 120.0), Scalar(125.0, 255.0, 255.0)) >= 0.06
+            var v = -1
+            if (gem) for (dark in listOf(false, true)) {
+                v = digitsOf(ocrRef(rgb, 535, 1445, 730, 1525, dark))
+                if (v >= 0) break
+            }
+            if (gem && v > 65) {
+                if (shopOpened in 0..5) shopSkipSig[shopOpened] = shopSigOf(shopOpened)
+                clickRef(983.0, 882.0, "daily : Marchand : prix $v cristaux dans la fenêtre (> 65), fermée sans acheter")
+                shopOpened = -1
+                shopWaitUntil = now + 900
+                shopSig = ""
+                return
+            }
+            shopBuys++
+            clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (gem) (if (v >= 0) "$v cristaux" else "cristaux (prix illisible)") else "en ressources"} (n° $shopBuys)")
+            shopOpened = -1
+            shopWaitUntil = now + 1600
+            shopSig = ""
+            return
+        }
+        // Écran du magasin : onglet « Marchand Nomade » en bas à gauche
+        var tab = ocrRef(rgb, 0, 2215, 300, 2335, true)
+        if ("march" !in tab && "nomade" !in tab) tab = ocrRef(rgb, 0, 2215, 300, 2335, false)
+        if ("march" !in tab && "nomade" !in tab) return
+        dailyIdleAt = now
+        if (now < shopWaitUntil) return
+
+        val reads = (0..5).map { shopRead(rgb, it) }
+        shopReads = reads
+        val sig = reads.joinToString("|") { "${it.first}${it.second}" }
+        if (sig != shopSig) { shopSig = sig; return } // on attend deux lectures identiques (fin des animations)
+
+        fun blocked(i: Int) = (reads[i].first == 'g' && reads[i].second > 65) ||
+            (shopSkipSig[i].isNotEmpty() && shopSkipSig[i] == shopSigOf(i))
+        val buy = (0..5).firstOrNull { i ->
+            !blocked(i) && (reads[i].first == 'r' || (reads[i].first == 'g' && reads[i].second in 1..65))
+        }
+        if (buy != null) {
+            if (shopBuys >= 400) { shopFinish("400 achats atteints"); return }
+            shopOpened = buy
+            shopUnknownAt = 0L
+            shopWaitUntil = now + 900
+            clickRef(shopCx[buy % 3].toDouble(), shopCy[buy / 3].toDouble(),
+                "daily : Marchand : case ${buy + 1} (${shopDesc(reads[buy])}), ouverture")
+            return
+        }
+        if ((0..5).all { blocked(it) }) {
+            shopUnknownAt = 0L
+            val green = colorRect(rgb, 760, 440, 1030, 520, Scalar(40.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0))
+            val orange = colorRect(rgb, 760, 440, 1030, 520, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0))
+            if (orange >= 0.3 && green < 0.1) {
+                shopFinish("6 cases bloquées et bouton d'actualisation orange (payant) : fin")
+            } else if (green >= 0.25) {
+                if (dailyBtn >= 40) { shopFinish("40 actualisations atteintes"); return }
+                dailyBtn++
+                shopSig = ""
+                shopSkipSig = Array(6) { "" }
+                shopWaitUntil = now + 2200
+                clickRef(895.0, 475.0, "daily : Marchand : 6 cases bloquées (${reads.joinToString(" ") { shopDesc(it) }}), actualisation gratuite n° $dailyBtn")
+            } else if (now - dailyStepAt > 3_000L) {
+                log("daily : Marchand : bouton d'actualisation non reconnu (vert $green, orange $orange)")
+                dailyStepAt = now
+            }
+            return
+        }
+        // Cases illisibles ou en transition : on laisse un peu de temps, sinon on s'arrête sans actualiser
+        if (shopUnknownAt == 0L) shopUnknownAt = now
+        else if (now - shopUnknownAt > 8_000L) {
+            shopFinish("cases illisibles (${reads.joinToString(" ") { shopDesc(it) }}) : arrêt sans actualiser")
+        }
+    }
+
+    private fun shopDesc(r: Pair<Char, Int>) = when (r.first) {
+        'g' -> if (r.second >= 0) "${r.second} cristaux" else "cristaux ?"
+        'r' -> "ressources"
+        else -> "vide"
+    }
+
+    private fun shopSigOf(i: Int): String = shopReads.getOrNull(i)?.let { "${it.first}${it.second}" } ?: ""
+
+    private fun shopFinish(msg: String) {
+        log("daily : Marchand nomade : $msg")
+        lastClick = SystemClock.uptimeMillis()
+        backArrow()
+        dailyStep = 5
+        dailyTaskDone("Marchand nomade")
     }
 
     private var rewardTaps = 0
