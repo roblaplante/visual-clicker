@@ -1758,6 +1758,19 @@ class BotService : Service() {
                     clickRef(630.0, 2255.0, "daily : Marchand nomade : point rouge sur Magasin, ouverture")
                     return
                 }
+                // VIP : point rouge à droite du badge « VIP » (en haut à droite de la ville)
+                if (cityVisible && (dailyAttempts["vip"] ?: 0) < 2 && redDotAt(rgb, 1050.0, 185.0)) {
+                    dailyAttempts["vip"] = (dailyAttempts["vip"] ?: 0) + 1
+                    dailyState = "VIP"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyGrey = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    clickRef(990.0, 200.0, "daily : VIP : point rouge sur le badge, ouverture")
+                    return
+                }
                 // Puis l'événement « Assaut Rebelle » (golem rouge en haut à gauche, avec son minuteur)
                 val golem = if (cityVisible && (dailyAttempts["combat"] ?: 0) < 2) farmMatch(screen, "golem", 0.8) else null
                 if (golem != null) {
@@ -1881,6 +1894,7 @@ class BotService : Service() {
             "COFFRES" -> detectCoffres(rgb, now)
             "CREUSET" -> detectCreuset(rgb, now)
             "MARCHAND" -> detectMarchand(rgb, now)
+            "VIP" -> detectVip(rgb, now)
         }
     }
 
@@ -2783,6 +2797,60 @@ class BotService : Service() {
         backArrow()
         dailyStep = 5
         dailyTaskDone("Marchand nomade")
+    }
+
+
+    /**
+     * VIP : écran VIP > coffre en haut à droite (s'il a son point rouge) > écran « Récompenses » (appui dans le vide) >
+     * « Récupérer » vert du Pack Quotidien Gratuit > écran « Récompenses » (bandeau doré) > flèche bleue en haut à gauche.
+     */
+    private fun detectVip(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : VIP abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // Écrans « Récompenses » : « Appuie pour continuer » (EXP VIP) ou « Appuie n'importe où pour quitter » (pack)
+        val rw = ocrRef(rgb, 200, 2150, 880, 2260)
+        if ("continuer" in rw) {
+            dailyIdleAt = now
+            dailyActAt = now
+            clickRef(660.0, 520.0, "daily : VIP : écran Récompenses (EXP VIP), appui dans le vide")
+            return
+        }
+        if ("appuie" in rw || "quitter" in rw) {
+            dailyIdleAt = now
+            dailyActAt = now
+            tapRewards("daily : VIP : écran Récompenses, appui sur le bandeau")
+            return
+        }
+        // Écran VIP (titre « VIP » en haut à gauche, ou « Niveau Actuel »)
+        val title = ocrRef(rgb, 120, 95, 330, 185)
+        val head = if ("vip" in title) title else ocrRef(rgb, 320, 270, 760, 330, true)
+        if ("vip" !in title && "niveau" !in head) return
+        dailyIdleAt = now
+        if (now - dailyActAt < 1_500L) return // on laisse l'écran de récompenses apparaître
+        if (dailyBtn < 2 && redDotAt(rgb, 982.0, 462.0)) {
+            dailyBtn++
+            dailyActAt = now
+            clickRef(938.0, 505.0, "daily : VIP : coffre (point rouge)")
+            return
+        }
+        if (dailyGrey < 2 && colorFrac(rgb, 870.0, 1655.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0), 30) >= 0.3) {
+            dailyGrey++
+            dailyActAt = now
+            clickRef(870.0, 1655.0, "daily : VIP : Récupérer (Pack Quotidien Gratuit)")
+            return
+        }
+        dailyAttempts["vip"] = 2
+        lastClick = now
+        backArrow()
+        log("daily : VIP : terminé (coffre $dailyBtn, récupérer $dailyGrey), flèche retour")
+        dailyStep = 5
+        dailyTaskDone("VIP")
     }
 
     private var rewardTaps = 0
