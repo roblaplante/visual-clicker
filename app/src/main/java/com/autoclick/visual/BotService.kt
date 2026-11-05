@@ -1743,6 +1743,19 @@ class BotService : Service() {
                     clickRef(60.0, 2000.0, "daily : Missions quotidiennes : rond rouge, ouverture")
                     return
                 }
+                // Magasin nomade : point rouge sur la petite maison « Magasin » de la barre du bas
+                if (cityVisible && (dailyAttempts["marchand"] ?: 0) < 2 && redDotAt(rgb, 672.0, 2203.0)) {
+                    dailyAttempts["marchand"] = (dailyAttempts["marchand"] ?: 0) + 1
+                    dailyState = "MARCHAND"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    resetShop()
+                    clickRef(630.0, 2255.0, "daily : Marchand nomade : point rouge sur Magasin, ouverture")
+                    return
+                }
                 // Puis l'événement « Assaut Rebelle » (golem rouge en haut à gauche, avec son minuteur)
                 val golem = if (cityVisible && (dailyAttempts["combat"] ?: 0) < 2) farmMatch(screen, "golem", 0.8) else null
                 if (golem != null) {
@@ -1795,7 +1808,6 @@ class BotService : Service() {
                 var aventureCy = -1.0
                 var contribCy = -1.0
                 var creusetCy = -1.0
-                var marchandCy = -1.0
                 for (l in lines) {
                     val t = l.text.lowercase()
                     if ("ligne" in t) cands.add(Pair(l.cy, "enligne"))
@@ -1806,14 +1818,12 @@ class BotService : Service() {
                     if ("fontaine" in t) cands.add(Pair(l.cy, "fontaine")) // Collecte d'Essence d'Eau : Fontaine Vitale
                     if ("inactiv" in t) cands.add(Pair(l.cy, "conquete")) // Conquérir : Revenu d'inactivité
                     if ("creuset" in t || "creuseur" in t) creusetCy = maxOf(creusetCy, l.cy) // titre de section puis tâche : la plus basse
-                    if ("nomade" in t || "marchand" in t || "magasin" in t) marchandCy = maxOf(marchandCy, l.cy) // Magasin nomade
                     if ("triomphe" in t && "activit" in t) cands.add(Pair(l.cy, "triomphe")) // Triomphe d'activité quotidienne
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
                     if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
                 }
                 if (contribCy >= 0) cands.add(Pair(contribCy, "contrib"))
                 if (creusetCy >= 0) cands.add(Pair(creusetCy, "creuset"))
-                if (marchandCy >= 0) cands.add(Pair(marchandCy, "marchand"))
                 if (aventureCy >= 0) cands.add(Pair(aventureCy, "aventure"))
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
@@ -1830,7 +1840,6 @@ class BotService : Service() {
                     dropSeenAt = now
                     dailyIdleAt = now
                     dailyStepAt = now
-                    if (key == "marchand") resetShop()
                     clickRef(335.0, rowY + 21, "daily : $key : clic sur le texte de la tâche") // le texte déclenche comme la coche
                     launched = true
                     break
@@ -2703,6 +2712,13 @@ class BotService : Service() {
         if ("march" !in tab && "nomade" !in tab) tab = ocrRef(rgb, 0, 2215, 300, 2335, false)
         if ("march" !in tab && "nomade" !in tab) return
         dailyIdleAt = now
+        if (dailyStep == 0) {
+            // première fois dans le magasin : on touche l'onglet « Marchand Nomade » (en bas à gauche)
+            dailyStep = 1
+            shopWaitUntil = now + 1200
+            clickRef(150.0, 2275.0, "daily : Marchand nomade : clic sur l'onglet du bas")
+            return
+        }
         if (now < shopWaitUntil) return
 
         val reads = (0..5).map { shopRead(rgb, it) }
@@ -2760,6 +2776,7 @@ class BotService : Service() {
 
     private fun shopFinish(msg: String) {
         log("daily : Marchand nomade : $msg")
+        dailyAttempts["marchand"] = 2 // fini pour ce passage, même si le point rouge reste (autres onglets)
         lastClick = SystemClock.uptimeMillis()
         backArrow()
         dailyStep = 5
