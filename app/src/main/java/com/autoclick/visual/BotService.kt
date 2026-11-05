@@ -918,6 +918,8 @@ class BotService : Service() {
                 val w = stats.get(i, Imgproc.CC_STAT_WIDTH)[0]
                 val h = stats.get(i, Imgproc.CC_STAT_HEIGHT)[0]
                 val a = stats.get(i, Imgproc.CC_STAT_AREA)[0]
+                // Le badge orange du personnage (en haut à gauche, toujours au même endroit) n'est pas un pin.
+                if (x + w / 2.0 < 0.2 * sw && y + h / 2.0 > 0.222 * sw && y + h / 2.0 < 0.5 * sw) continue
                 if (h < 0.11 * sw || h > 0.185 * sw) continue // le pin hexagonal (tête de roi) est bien plus haut
                 if (ri == 2 && hexX >= 0 && hexX >= x && hexX <= x + w && hexY >= y && hexY <= y + h) continue // c'est le boss
                 val pw = 0.099 * sw // largeur d'un pin
