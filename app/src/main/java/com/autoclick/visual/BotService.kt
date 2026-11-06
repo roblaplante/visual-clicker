@@ -192,6 +192,8 @@ class BotService : Service() {
             loadHunt()
         } else if (mode == "daily") {
             loadDaily()
+        } else if (mode == "marchand") {
+            loadMarchand()
         } else {
             loadTemplates()
             loadGate()
@@ -229,6 +231,7 @@ class BotService : Service() {
                     "farm" -> loadFarm()
                     "hunt" -> loadHunt()
                     "daily" -> loadDaily()
+                    "marchand" -> loadMarchand()
                     else -> {
                         loadTemplates()
                         loadGate()
@@ -609,6 +612,10 @@ class BotService : Service() {
         }
         if (mode == "daily") {
             detectDaily(screen, rgb)
+            return
+        }
+        if (mode == "marchand") {
+            detectMarchandSolo(rgb)
             return
         }
         val now = SystemClock.uptimeMillis()
@@ -2886,6 +2893,11 @@ class BotService : Service() {
         lastClick = SystemClock.uptimeMillis()
         backArrow()
         dailyStep = 5
+        if (mode == "marchand") {
+            marchandFinished = true
+            main.post { pauseBot("Marchand nomade terminé") }
+            return
+        }
         dailyTaskDone("Marchand nomade")
     }
 
@@ -2941,6 +2953,79 @@ class BotService : Service() {
         log("daily : VIP : terminé (coffre $dailyBtn, récupérer $dailyGrey), flèche retour")
         dailyStep = 5
         dailyTaskDone("VIP")
+    }
+
+
+    // ---------- Marchand nomade à la demande (menu « Marchand nomade ») ----------
+
+    private var marchandFinished = false
+    private var soloNavAt = 0L
+    private var soloNavTries = 0
+    private var soloUnknownAt = 0L
+    private var soloBackTries = 0
+
+    private fun resetMarchandSolo() {
+        resetShop()
+        dailyAttempts.clear()
+        dailyState = "MARCHAND"; dailyStep = 0; dailyBtn = 0; dailyGrey = 0
+        dailyIdleAt = SystemClock.uptimeMillis()
+        marchandFinished = false
+        soloNavAt = 0L; soloNavTries = 0; soloUnknownAt = 0L; soloBackTries = 0
+    }
+
+    private fun loadMarchand() {
+        resetMarchandSolo()
+        log("marchand nomade : démarrage (à la demande)")
+    }
+
+    /** Ouvre le magasin depuis la ville (icône « Magasin », sans exiger de point rouge) puis lance la routine d'achats. */
+    private fun detectMarchandSolo(rgb: Mat) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClick < cooldown || marchandFinished) return
+        val dlg = colorRect(rgb, 330, 1435, 750, 1535, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0)) >= 0.35
+        var tab = ocrRef(rgb, 0, 2215, 300, 2335, true)
+        if ("march" !in tab && "nomade" !in tab) tab = ocrRef(rgb, 0, 2215, 300, 2335, false)
+        val inShop = dlg || "march" in tab || "nomade" in tab
+        if (inShop) {
+            soloUnknownAt = 0L
+            soloBackTries = 0
+            dailyIdleAt = now
+            detectMarchand(rgb, now)
+            return
+        }
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val city = "magasin" in bar && listOf("conqu", "héros", "heros", "alliance", "monde", "sac").count { it in bar } >= 1
+        if (city) {
+            soloUnknownAt = 0L
+            if (now - soloNavAt > 4_000L) {
+                if (++soloNavTries > 5) {
+                    marchandFinished = true
+                    log("marchand nomade : impossible d'ouvrir le magasin (5 essais)")
+                    main.post { pauseBot("Marchand nomade : magasin introuvable") }
+                    return
+                }
+                soloNavAt = now
+                resetShop()
+                dailyStep = 0
+                dailyIdleAt = now
+                clickRef(630.0, 2255.0, "marchand nomade : ouverture du magasin (icône Magasin)")
+            }
+            return
+        }
+        // écran inconnu : on laisse 10 s, puis on essaie la flèche de retour
+        if (soloUnknownAt == 0L) soloUnknownAt = now
+        if (now - soloUnknownAt > 10_000L) {
+            soloUnknownAt = now
+            if (++soloBackTries > 4) {
+                marchandFinished = true
+                log("marchand nomade : écran inconnu, arrêt")
+                main.post { pauseBot("Marchand nomade : écran inconnu") }
+                return
+            }
+            lastClick = now
+            backArrow()
+            log("marchand nomade : écran inconnu, flèche retour")
+        }
     }
 
     private var rewardTaps = 0
@@ -3437,6 +3522,7 @@ class BotService : Service() {
                 searchedAt = 0L
             }
             if (mode == "daily" && dailyFinished) resetDaily()
+            if (mode == "marchand" && marchandFinished) resetMarchandSolo()
         }
         tv.text = if (running) "⏸" else "▶"
         (tv.background as GradientDrawable)

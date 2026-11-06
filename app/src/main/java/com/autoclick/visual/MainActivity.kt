@@ -35,7 +35,7 @@ import java.io.FileOutputStream
  */
 class MainActivity : AppCompatActivity() {
 
-    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?), 7 = Daily
+    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?), 7 = Daily, 8 = Marchand nomade
     private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
     private var huntN = 5 // idem pour le hunt
     private lateinit var huntCountEdit: EditText
@@ -162,6 +162,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(button("Farm") { showFarmChoice() })
         root.addView(button("Hunt (chasses de Terreur)") { showHuntChoice() })
         root.addView(button("Daily (tâches quotidiennes)") { showDaily() })
+        root.addView(button("Marchand nomade") { showMarchand() })
 
         root.addView(label("Autorisations (à faire une seule fois)"))
         root.addView(button("Activer le service d'accessibilité") {
@@ -421,6 +422,32 @@ class MainActivity : AppCompatActivity() {
         root.addView(button("Démarrer") { start("daily") })
     }
 
+    // ---------- Marchand nomade (à la demande) ----------
+
+    private fun showMarchand() {
+        screen = 8
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Marchand nomade"; textSize = 22f })
+        root.addView(
+            label(
+                "Principe : l'appli ouvre le magasin (icône « Magasin » de la barre du bas), touche l'onglet " +
+                    "« Marchand Nomade » et lit les 6 cases. Elle achète tout ce qui est payé en ressources, " +
+                    "et les objets à 65 cristaux bleus ou moins (ou exactement 600). Elle n'achète jamais le reste."
+            )
+        )
+        root.addView(
+            label(
+                "Quand les 6 cases sont bloquées par des objets trop chers, elle touche « Actualisation Gratuite » " +
+                    "et recommence, jusqu'à ce que le bouton d'actualisation devienne orange (payant). " +
+                    "Elle revient alors à la ville avec la flèche bleue et s'arrête. Cela peut prendre du temps : " +
+                    "le bouton ⏸ arrête tout à tout moment."
+            )
+        )
+        root.addView(label("Ouvrez le jeu sur la ville (ou directement dans le magasin), puis démarrez."))
+        root.addView(button("Démarrer") { start("marchand") })
+    }
+
     // ---------- Hunt (chasses de Terreur) ----------
 
     private fun showHuntChoice() {
@@ -496,7 +523,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
-        if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7) return
+        if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
