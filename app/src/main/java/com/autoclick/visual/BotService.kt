@@ -2630,12 +2630,16 @@ class BotService : Service() {
     private var shopWaitUntil = 0L
     private var shopBuys = 0
     private var shopOpened = -1
+    private var shopExpect: Pair<Char, Int>? = null
+    private var shopFail = 0
+    private var shopOpenTries = 0
     private var shopUnknownAt = 0L
     private var shopSkipSig = Array(6) { "" }
     private var shopReads: List<Pair<Char, Int>> = emptyList()
 
     private fun resetShop() {
         shopSig = ""; shopWaitUntil = 0L; shopBuys = 0; shopOpened = -1; shopUnknownAt = 0L
+        shopExpect = null; shopFail = 0; shopOpenTries = 0
         shopSkipSig = Array(6) { "" }
         shopReads = emptyList()
     }
@@ -2708,23 +2712,31 @@ class BotService : Service() {
         val dlg = colorRect(rgb, 330, 1435, 750, 1535, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0)) >= 0.35
         if (dlg) {
             dailyIdleAt = now
-            val gem = colorRect(rgb, 450, 1440, 560, 1530, Scalar(95.0, 130.0, 120.0), Scalar(125.0, 255.0, 255.0)) >= 0.06
-            var v = -1
-            if (gem) for (dark in listOf(false, true)) {
-                v = digitsOf(ocrRef(rgb, 535, 1445, 730, 1525, dark))
-                if (v >= 0) break
+            shopOpenTries = 0
+            val dr = shopDialogRead(rgb)
+            val exp = shopExpect
+            // Achat seulement si la fenêtre confirme ce qu'on attendait : ressources, ou cristaux lus et <= 65.
+            // Prix illisible, prix > 65, fenêtre inattendue ou type différent : on ferme sans acheter.
+            val ok = exp != null && when (dr.first) {
+                'r' -> exp.first == 'r'
+                'g' -> dr.second in 1..65 && exp.first == 'g' && exp.second in 1..65
+                else -> false
             }
-            if (gem && v > 65) {
+            if (!ok) {
                 if (shopOpened in 0..5) shopSkipSig[shopOpened] = shopSigOf(shopOpened)
-                clickRef(983.0, 882.0, "daily : Marchand : prix $v cristaux dans la fenêtre (> 65), fermée sans acheter")
+                shopFail++
+                val why = "attendu ${exp?.let { shopDesc(it) } ?: "rien"}, lu ${shopDesc(dr)}"
+                clickRef(983.0, 882.0, "daily : Marchand : fenêtre Acheter refusée ($why), fermée sans acheter")
                 shopOpened = -1
+                shopExpect = null
                 shopWaitUntil = now + 900
                 shopSig = ""
                 return
             }
             shopBuys++
-            clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (gem) (if (v >= 0) "$v cristaux" else "cristaux (prix illisible)") else "en ressources"} (n° $shopBuys)")
+            clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (dr.first == 'g') "${dr.second} cristaux" else "en ressources"} (n° $shopBuys)")
             shopOpened = -1
+            shopExpect = null
             shopWaitUntil = now + 1600
             shopSig = ""
             return
@@ -2753,11 +2765,14 @@ class BotService : Service() {
         val buy = (0..5).firstOrNull { i ->
             !blocked(i) && (reads[i].first == 'r' || (reads[i].first == 'g' && reads[i].second in 1..65))
         }
+        if (shopFail >= 6) { shopFinish("trop de fenêtres Acheter refusées : arrêt par sécurité"); return }
         if (buy != null) {
             if (shopBuys >= 400) { shopFinish("400 achats atteints"); return }
+            if (++shopOpenTries > 6) { shopFinish("la fenêtre Acheter ne s'ouvre pas : arrêt par sécurité"); return }
             shopOpened = buy
+            shopExpect = reads[buy]
             shopUnknownAt = 0L
-            shopWaitUntil = now + 900
+            shopWaitUntil = now + 2500
             clickRef(shopCx[buy % 3].toDouble(), shopCy[buy / 3].toDouble(),
                 "daily : Marchand : case ${buy + 1} (${shopDesc(reads[buy])}), ouverture")
             return
@@ -2786,6 +2801,41 @@ class BotService : Service() {
         else if (now - shopUnknownAt > 8_000L) {
             shopFinish("cases illisibles (${reads.joinToString(" ") { shopDesc(it) }}) : arrêt sans actualiser")
         }
+    }
+
+    /** Prix lu dans le bouton orange de la fenêtre « Acheter » : ('g', valeur ou -1) cristaux, ('r', 0) ressources. */
+    private fun shopDialogRead(rgb: Mat): Pair<Char, Int> {
+        val sc = rgb.cols() / 1080.0
+        val ax = (330 * sc).toInt()
+        val ay = (1435 * sc).toInt()
+        val bw = (420 * sc).toInt()
+        val bh = (100 * sc).toInt()
+        if (ax + bw > rgb.cols() || ay + bh > rgb.rows()) return Pair('?', -1)
+        val btn = Mat(rgb, Rect(ax, ay, bw, bh))
+        val hsv = Mat()
+        Imgproc.cvtColor(btn, hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, Scalar(95.0, 130.0, 120.0), Scalar(125.0, 255.0, 255.0), m)
+        val blue = Core.countNonZero(m)
+        var xb = -1
+        if (blue > 0.02 * bw * bh) {
+            val cs = Mat()
+            Core.reduce(m, cs, 0, Core.REDUCE_SUM, CvType.CV_32S)
+            val arr = IntArray(bw)
+            cs.get(0, 0, arr)
+            for (i in bw - 1 downTo 0) if (arr[i] >= 255 * 3) { xb = i; break }
+            cs.release()
+        }
+        hsv.release(); m.release()
+        if (xb < 0) return Pair('r', 0)
+        val sx = minOf(xb + 4, bw - 12)
+        val num = Mat(btn, Rect(sx, 0, bw - sx, bh))
+        var v = -1
+        for (dark in listOf(false, true)) {
+            v = digitsOf(ocrText(num, dark))
+            if (v >= 0) break
+        }
+        return Pair('g', v)
     }
 
     private fun shopDesc(r: Pair<Char, Int>) = when (r.first) {
