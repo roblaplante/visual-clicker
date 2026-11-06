@@ -2633,13 +2633,16 @@ class BotService : Service() {
     private var shopExpect: Pair<Char, Int>? = null
     private var shopFail = 0
     private var shopOpenTries = 0
+    private var shopLastSlot = -1
+    private var shopLastSig = ""
+    private var shopSameCnt = 0
     private var shopUnknownAt = 0L
     private var shopSkipSig = Array(6) { "" }
     private var shopReads: List<Pair<Char, Int>> = emptyList()
 
     private fun resetShop() {
         shopSig = ""; shopWaitUntil = 0L; shopBuys = 0; shopOpened = -1; shopUnknownAt = 0L
-        shopExpect = null; shopFail = 0; shopOpenTries = 0
+        shopExpect = null; shopFail = 0; shopOpenTries = 0; shopLastSlot = -1; shopLastSig = ""; shopSameCnt = 0
         shopSkipSig = Array(6) { "" }
         shopReads = emptyList()
     }
@@ -2688,17 +2691,18 @@ class BotService : Service() {
             }
             return Pair('g', v)
         }
-        for (dark in listOf(true, false)) {
-            if (digitsOf(ocrText(strip, dark)) >= 0) return Pair('r', 0)
-        }
-        // OCR muet : si la bande contient du texte sombre (le prix), c'est quand même un prix en ressources
         val g = Mat()
         Imgproc.cvtColor(strip, g, Imgproc.COLOR_RGB2GRAY)
+        val sig = (Core.mean(g).`val`[0] * 10).toInt() // signature de contenu : change quand l'objet de la case change
         val dk = Mat()
         Imgproc.threshold(g, dk, 110.0, 255.0, Imgproc.THRESH_BINARY_INV)
         val darkFrac = Core.countNonZero(dk).toDouble() / (bw * bh)
         g.release(); dk.release()
-        return if (darkFrac >= 0.04) Pair('r', 0) else Pair('?', -1)
+        if (darkFrac >= 0.04) return Pair('r', sig)
+        for (dark in listOf(true, false)) {
+            if (digitsOf(ocrText(strip, dark)) >= 0) return Pair('r', sig)
+        }
+        return Pair('?', -1)
     }
 
     /**
@@ -2761,6 +2765,8 @@ class BotService : Service() {
             return
         }
         if (now < shopWaitUntil) return
+        shopExpect = null
+        shopOpened = -1
 
         val reads = (0..5).map { shopRead(rgb, it) }
         shopReads = reads
@@ -2775,10 +2781,28 @@ class BotService : Service() {
         if (shopFail >= 6) { shopFinish("trop de fenêtres Acheter refusées : arrêt par sécurité"); return }
         if (buy != null) {
             if (shopBuys >= 400) { shopFinish("400 achats atteints"); return }
-            if (++shopOpenTries > 6) { shopFinish("la fenêtre Acheter ne s'ouvre pas : arrêt par sécurité"); return }
+            val bsig = "${reads[buy].first}${reads[buy].second}"
+            // même case, même contenu, touchée 3 fois sans changement : l'achat ne se fait pas, on l'ignore
+            if (buy == shopLastSlot && bsig == shopLastSig) shopSameCnt++ else { shopLastSlot = buy; shopLastSig = bsig; shopSameCnt = 1 }
+            if (shopSameCnt > 3) {
+                shopSkipSig[buy] = shopSigOf(buy)
+                log("daily : Marchand : case ${buy + 1} inchangée après 3 touches, ignorée")
+                shopSameCnt = 0
+                return
+            }
+            shopUnknownAt = 0L
             shopOpened = buy
             shopExpect = reads[buy]
-            shopUnknownAt = 0L
+            if (reads[buy].first == 'r') {
+                // objet payé en ressources : l'achat se fait directement en touchant le prix (pas de fenêtre)
+                shopBuys++
+                shopWaitUntil = now + 1600
+                shopSig = ""
+                clickRef(shopCx[buy % 3].toDouble(), shopCy[buy / 3].toDouble(),
+                    "daily : Marchand : case ${buy + 1} (ressources), achat direct (n° $shopBuys)")
+                return
+            }
+            if (++shopOpenTries > 6) { shopFinish("la fenêtre Acheter ne s'ouvre pas : arrêt par sécurité"); return }
             shopWaitUntil = now + 2500
             clickRef(shopCx[buy % 3].toDouble(), shopCy[buy / 3].toDouble(),
                 "daily : Marchand : case ${buy + 1} (${shopDesc(reads[buy])}), ouverture")
