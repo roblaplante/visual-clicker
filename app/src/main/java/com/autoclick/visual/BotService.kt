@@ -2751,7 +2751,7 @@ class BotService : Service() {
             }
             if (!ok) {
                 if (shopOpened in 0..5) shopSkipSig[shopOpened] = shopSigOf(shopOpened)
-                shopFail++
+                if (!verifying) shopFail++ // un contrôle qui confirme « trop cher » n'est pas un échec
                 val why = "attendu ${exp?.let { shopDesc(it) } ?: "rien"}, lu ${shopDesc(dr)}"
                 clickRef(983.0, 882.0, "daily : Marchand : fenêtre Acheter refusée ($why), fermée sans acheter")
                 shopOpened = -1
