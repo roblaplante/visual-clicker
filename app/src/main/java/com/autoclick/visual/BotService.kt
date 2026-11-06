@@ -2666,7 +2666,7 @@ class BotService : Service() {
         val hsv = Mat()
         Imgproc.cvtColor(strip, hsv, Imgproc.COLOR_RGB2HSV)
         val m = Mat()
-        Core.inRange(hsv, Scalar(95.0, 130.0, 120.0), Scalar(125.0, 255.0, 255.0), m)
+        Core.inRange(hsv, Scalar(98.0, 150.0, 170.0), Scalar(122.0, 255.0, 255.0), m)
         val blue = Core.countNonZero(m)
         var xb = -1
         if (blue > 0.012 * bw * bh) {
@@ -2691,7 +2691,14 @@ class BotService : Service() {
         for (dark in listOf(true, false)) {
             if (digitsOf(ocrText(strip, dark)) >= 0) return Pair('r', 0)
         }
-        return Pair('?', -1)
+        // OCR muet : si la bande contient du texte sombre (le prix), c'est quand même un prix en ressources
+        val g = Mat()
+        Imgproc.cvtColor(strip, g, Imgproc.COLOR_RGB2GRAY)
+        val dk = Mat()
+        Imgproc.threshold(g, dk, 110.0, 255.0, Imgproc.THRESH_BINARY_INV)
+        val darkFrac = Core.countNonZero(dk).toDouble() / (bw * bh)
+        g.release(); dk.release()
+        return if (darkFrac >= 0.04) Pair('r', 0) else Pair('?', -1)
     }
 
     /**
@@ -2719,7 +2726,7 @@ class BotService : Service() {
             // Prix illisible, prix > 65, fenêtre inattendue ou type différent : on ferme sans acheter.
             val ok = exp != null && when (dr.first) {
                 'r' -> exp.first == 'r'
-                'g' -> dr.second in 1..65 && exp.first == 'g' && exp.second in 1..65
+                'g' -> shopOk(dr.second) && exp.first == 'g' && shopOk(exp.second)
                 else -> false
             }
             if (!ok) {
@@ -2760,10 +2767,10 @@ class BotService : Service() {
         val sig = reads.joinToString("|") { "${it.first}${it.second}" }
         if (sig != shopSig) { shopSig = sig; return } // on attend deux lectures identiques (fin des animations)
 
-        fun blocked(i: Int) = (reads[i].first == 'g' && reads[i].second > 65) ||
+        fun blocked(i: Int) = (reads[i].first == 'g' && reads[i].second > 65 && reads[i].second != 600) ||
             (shopSkipSig[i].isNotEmpty() && shopSkipSig[i] == shopSigOf(i))
         val buy = (0..5).firstOrNull { i ->
-            !blocked(i) && (reads[i].first == 'r' || (reads[i].first == 'g' && reads[i].second in 1..65))
+            !blocked(i) && (reads[i].first == 'r' || (reads[i].first == 'g' && shopOk(reads[i].second)))
         }
         if (shopFail >= 6) { shopFinish("trop de fenêtres Acheter refusées : arrêt par sécurité"); return }
         if (buy != null) {
@@ -2815,7 +2822,7 @@ class BotService : Service() {
         val hsv = Mat()
         Imgproc.cvtColor(btn, hsv, Imgproc.COLOR_RGB2HSV)
         val m = Mat()
-        Core.inRange(hsv, Scalar(95.0, 130.0, 120.0), Scalar(125.0, 255.0, 255.0), m)
+        Core.inRange(hsv, Scalar(98.0, 150.0, 170.0), Scalar(122.0, 255.0, 255.0), m)
         val blue = Core.countNonZero(m)
         var xb = -1
         if (blue > 0.02 * bw * bh) {
@@ -2837,6 +2844,9 @@ class BotService : Service() {
         }
         return Pair('g', v)
     }
+
+    /** Prix en cristaux autorisé : 65 ou moins, ou exactement 600 (accélérations d'une heure). */
+    private fun shopOk(v: Int) = v in 1..65 || v == 600
 
     private fun shopDesc(r: Pair<Char, Int>) = when (r.first) {
         'g' -> if (r.second >= 0) "${r.second} cristaux" else "cristaux ?"
