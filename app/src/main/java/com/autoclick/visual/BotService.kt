@@ -2641,6 +2641,9 @@ class BotService : Service() {
     private var shopFail = 0
     private var shopOpenTries = 0
     private var shopLastSlot = -1
+    private var shopCheckDone = false
+    private val shopVerify = HashSet<Int>()
+    private var shopDlgFirst = 0L
     private var shopLastSig = ""
     private var shopSameCnt = 0
     private var shopUnknownAt = 0L
@@ -2650,6 +2653,7 @@ class BotService : Service() {
     private fun resetShop() {
         shopSig = ""; shopWaitUntil = 0L; shopBuys = 0; shopOpened = -1; shopUnknownAt = 0L
         shopExpect = null; shopFail = 0; shopOpenTries = 0; shopLastSlot = -1; shopLastSig = ""; shopSameCnt = 0
+        shopCheckDone = false; shopVerify.clear(); shopDlgFirst = 0L
         shopSkipSig = Array(6) { "" }
         shopReads = emptyList()
     }
@@ -2731,13 +2735,18 @@ class BotService : Service() {
         if (dlg) {
             dailyIdleAt = now
             shopOpenTries = 0
+            // on laisse la fenêtre finir de s'afficher avant de lire le prix
+            if (shopDlgFirst == 0L) { shopDlgFirst = now; return }
+            if (now - shopDlgFirst < 450L) return
+            shopDlgFirst = 0L
             val dr = shopDialogRead(rgb)
             val exp = shopExpect
             // Achat seulement si la fenêtre confirme ce qu'on attendait : ressources, ou cristaux lus et <= 65.
             // Prix illisible, prix > 65, fenêtre inattendue ou type différent : on ferme sans acheter.
+            val verifying = shopOpened in shopVerify // contrôle avant actualisation : la fenêtre a le dernier mot
             val ok = exp != null && when (dr.first) {
                 'r' -> exp.first == 'r'
-                'g' -> shopOk(dr.second) && exp.first == 'g' && shopOk(exp.second)
+                'g' -> shopOk(dr.second) && exp.first == 'g' && (shopOk(exp.second) || verifying)
                 else -> false
             }
             if (!ok) {
@@ -2752,7 +2761,9 @@ class BotService : Service() {
                 return
             }
             shopBuys++
-            clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (dr.first == 'g') "${dr.second} cristaux" else "en ressources"} (n° $shopBuys)")
+            shopCheckDone = false
+            shopVerify.clear()
+            clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (dr.first == 'g') "${dr.second} cristaux" else "en ressources"}${if (verifying) " (lecture de la case corrigée par la fenêtre)" else ""} (n° $shopBuys)")
             shopOpened = -1
             shopExpect = null
             shopWaitUntil = now + 1600
@@ -2783,7 +2794,9 @@ class BotService : Service() {
         fun blocked(i: Int) = (reads[i].first == 'g' && reads[i].second > 65 && reads[i].second != 600) ||
             (shopSkipSig[i].isNotEmpty() && shopSkipSig[i] == shopSigOf(i))
         val buy = (0..5).firstOrNull { i ->
-            !blocked(i) && (reads[i].first == 'r' || (reads[i].first == 'g' && shopOk(reads[i].second)))
+            val skipped = shopSkipSig[i].isNotEmpty() && shopSkipSig[i] == shopSigOf(i)
+            !skipped && (reads[i].first == 'r' ||
+                (reads[i].first == 'g' && (shopOk(reads[i].second) || i in shopVerify)))
         }
         if (shopFail >= 6) { shopFinish("trop de fenêtres Acheter refusées : arrêt par sécurité"); return }
         if (buy != null) {
@@ -2803,6 +2816,8 @@ class BotService : Service() {
             if (reads[buy].first == 'r') {
                 // objet payé en ressources : l'achat se fait directement en touchant le prix (pas de fenêtre)
                 shopBuys++
+                shopCheckDone = false
+                shopVerify.clear()
                 shopWaitUntil = now + 1600
                 shopSig = ""
                 clickRef(shopCx[buy % 3].toDouble(), shopCy[buy / 3].toDouble(),
@@ -2822,10 +2837,24 @@ class BotService : Service() {
             if (orange >= 0.3 && green < 0.1) {
                 shopFinish("6 cases bloquées et bouton d'actualisation orange (payant) : fin")
             } else if (green >= 0.25) {
+                if (!shopCheckDone) {
+                    // Petit contrôle avant d'actualiser : on efface les cases « ignorées » et on fait confirmer par la
+                    // fenêtre Acheter le prix des objets à cristaux lus entre 66 et 199 (une lecture ratée de « 63 », par exemple).
+                    shopCheckDone = true
+                    shopSkipSig = Array(6) { "" }
+                    shopVerify.clear()
+                    for (i in 0..5) if (reads[i].first == 'g' && reads[i].second in 66..199) shopVerify.add(i)
+                    shopSig = ""
+                    shopWaitUntil = now + 500
+                    log("daily : Marchand : contrôle avant actualisation (${reads.joinToString(" ") { shopDesc(it) }}), cases à confirmer par la fenêtre : ${shopVerify.map { it + 1 }}")
+                    return
+                }
                 if (dailyBtn >= 40) { shopFinish("40 actualisations atteintes"); return }
                 dailyBtn++
                 shopSig = ""
                 shopSkipSig = Array(6) { "" }
+                shopCheckDone = false
+                shopVerify.clear()
                 shopWaitUntil = now + 2200
                 clickRef(895.0, 475.0, "daily : Marchand : 6 cases bloquées (${reads.joinToString(" ") { shopDesc(it) }}), actualisation gratuite n° $dailyBtn")
             } else if (now - dailyStepAt > 3_000L) {
