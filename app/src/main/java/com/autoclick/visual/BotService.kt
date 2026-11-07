@@ -1752,19 +1752,6 @@ class BotService : Service() {
                     clickRef(60.0, 2000.0, "daily : Missions quotidiennes : rond rouge, ouverture")
                     return
                 }
-                // Magasin nomade : point rouge sur la petite maison « Magasin » de la barre du bas
-                if (cityVisible && (dailyAttempts["marchand"] ?: 0) < 2 && redDotAt(rgb, 672.0, 2203.0)) {
-                    dailyAttempts["marchand"] = (dailyAttempts["marchand"] ?: 0) + 1
-                    dailyState = "MARCHAND"
-                    dailyStep = 0
-                    dailyBtn = 0
-                    dailyActAt = now
-                    dailyIdleAt = now
-                    dailyStepAt = now
-                    resetShop()
-                    clickRef(630.0, 2255.0, "daily : Marchand nomade : point rouge sur Magasin, ouverture")
-                    return
-                }
                 // VIP : point rouge à droite du badge « VIP » (en haut à droite de la ville)
                 if (cityVisible && (dailyAttempts["vip"] ?: 0) < 2 && redDotAt(rgb, 1050.0, 185.0)) {
                     dailyAttempts["vip"] = (dailyAttempts["vip"] ?: 0) + 1
