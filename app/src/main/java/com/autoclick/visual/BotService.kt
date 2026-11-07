@@ -2725,7 +2725,7 @@ class BotService : Service() {
             shopOpenTries = 0
             // on laisse la fenêtre finir de s'afficher avant de lire le prix
             if (shopDlgFirst == 0L) { shopDlgFirst = now; return }
-            if (now - shopDlgFirst < 450L) return
+            if (now - shopDlgFirst < 350L) return
             shopDlgFirst = 0L
             val dr = shopDialogRead(rgb)
             val exp = shopExpect
@@ -2748,7 +2748,7 @@ class BotService : Service() {
                 clickRef(983.0, 882.0, "daily : Marchand : fenêtre Acheter refusée ($why), fermée sans acheter")
                 shopOpened = -1
                 shopExpect = null
-                shopWaitUntil = now + 900
+                shopWaitUntil = now + 600
                 shopSig = ""
                 return
             }
@@ -2758,7 +2758,7 @@ class BotService : Service() {
             clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (dr.first == 'g') "${dr.second} cristaux" else "en ressources"}${if (verifying) " (lecture de la case corrigée par la fenêtre)" else ""}, largeur ${shopDlgW.toInt()} (n° $shopBuys)")
             shopOpened = -1
             shopExpect = null
-            shopWaitUntil = now + 1600
+            shopWaitUntil = now + 800
             shopSig = ""
             return
         }
@@ -2770,7 +2770,7 @@ class BotService : Service() {
         if (dailyStep == 0) {
             // première fois dans le magasin : on touche l'onglet « Marchand Nomade » (en bas à gauche)
             dailyStep = 1
-            shopWaitUntil = now + 1200
+            shopWaitUntil = now + 800
             clickRef(150.0, 2275.0, "daily : Marchand nomade : clic sur l'onglet du bas")
             return
         }
@@ -2810,14 +2810,14 @@ class BotService : Service() {
                 shopBuys++
                 shopCheckDone = false
                 shopVerify.clear()
-                shopWaitUntil = now + 1600
+                shopWaitUntil = now + 800
                 shopSig = ""
                 clickRef(shopCx[buy % 3].toDouble(), shopCy[buy / 3].toDouble(),
                     "daily : Marchand : case ${buy + 1} (ressources), achat direct (n° $shopBuys)")
                 return
             }
             if (++shopOpenTries > 6) { shopFinish("la fenêtre Acheter ne s'ouvre pas : arrêt par sécurité"); return }
-            shopWaitUntil = now + 2500
+            shopWaitUntil = now + 1600
             clickRef(shopCx[buy % 3].toDouble(), shopCy[buy / 3].toDouble(),
                 "daily : Marchand : case ${buy + 1} (${shopDesc(reads[buy])}), ouverture")
             return
@@ -2847,7 +2847,7 @@ class BotService : Service() {
                 shopSkipSig = Array(6) { "" }
                 shopCheckDone = false
                 shopVerify.clear()
-                shopWaitUntil = now + 2200
+                shopWaitUntil = now + 1500
                 clickRef(895.0, 475.0, "daily : Marchand : 6 cases bloquées (${reads.joinToString(" ") { shopDesc(it) }}), actualisation gratuite n° $dailyBtn")
             } else if (now - dailyStepAt > 3_000L) {
                 log("daily : Marchand : bouton d'actualisation non reconnu (vert $green, orange $orange)")
@@ -3019,7 +3019,7 @@ class BotService : Service() {
     /** Ouvre le magasin depuis la ville (icône « Magasin », sans exiger de point rouge) puis lance la routine d'achats. */
     private fun detectMarchandSolo(rgb: Mat) {
         val now = SystemClock.uptimeMillis()
-        if (now - lastClick < cooldown || marchandFinished) return
+        if (now - lastClick < minOf(cooldown, 450L) || marchandFinished) return
         val dlg = colorRect(rgb, 330, 1435, 750, 1535, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0)) >= 0.35
         var tab = ocrRef(rgb, 0, 2215, 300, 2335, true)
         if ("march" !in tab && "nomade" !in tab) tab = ocrRef(rgb, 0, 2215, 300, 2335, false)
