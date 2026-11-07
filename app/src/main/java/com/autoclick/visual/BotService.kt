@@ -2628,6 +2628,7 @@ class BotService : Service() {
     private var shopFail = 0
     private var shopOpenTries = 0
     private var shopLastSlot = -1
+    private var shopDlgW = 0.0
     private var shopCheckDone = false
     private val shopVerify = HashSet<Int>()
     private var shopDlgFirst = 0L
@@ -2733,13 +2734,17 @@ class BotService : Service() {
             val verifying = shopOpened in shopVerify // contrôle avant actualisation : la fenêtre a le dernier mot
             val ok = exp != null && when (dr.first) {
                 'r' -> exp.first == 'r'
-                'g' -> shopOk(dr.second) && exp.first == 'g' && (shopOk(exp.second) || verifying)
+                'g' -> exp.first == 'g' && if (verifying) {
+                    dr.second in 1..65 // contrôle avant actualisation : seulement un « petit » prix confirmé par la fenêtre
+                } else {
+                    shopOk(dr.second) && shopOk(exp.second) && (dr.second > 65) == (exp.second > 65)
+                }
                 else -> false
             }
             if (!ok) {
                 if (shopOpened in 0..5) shopSkipSig[shopOpened] = shopSigOf(shopOpened)
                 if (!verifying) shopFail++ // un contrôle qui confirme « trop cher » n'est pas un échec
-                val why = "attendu ${exp?.let { shopDesc(it) } ?: "rien"}, lu ${shopDesc(dr)}"
+                val why = "attendu ${exp?.let { shopDesc(it) } ?: "rien"}, lu ${shopDesc(dr)}, largeur ${shopDlgW.toInt()}"
                 clickRef(983.0, 882.0, "daily : Marchand : fenêtre Acheter refusée ($why), fermée sans acheter")
                 shopOpened = -1
                 shopExpect = null
@@ -2750,7 +2755,7 @@ class BotService : Service() {
             shopBuys++
             shopCheckDone = false
             shopVerify.clear()
-            clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (dr.first == 'g') "${dr.second} cristaux" else "en ressources"}${if (verifying) " (lecture de la case corrigée par la fenêtre)" else ""} (n° $shopBuys)")
+            clickRef(540.0, 1485.0, "daily : Marchand : achat ${if (dr.first == 'g') "${dr.second} cristaux" else "en ressources"}${if (verifying) " (lecture de la case corrigée par la fenêtre)" else ""}, largeur ${shopDlgW.toInt()} (n° $shopBuys)")
             shopOpened = -1
             shopExpect = null
             shopWaitUntil = now + 1600
@@ -2888,6 +2893,23 @@ class BotService : Service() {
         for (dark in listOf(false, true)) {
             v = digitsOf(ocrText(num, dark))
             if (v >= 0) break
+        }
+        // Contrôle par la largeur du texte blanc (référence 1080 px) : 2 chiffres ≈ 45–60 px, 3 chiffres ≈ 76–95 px.
+        // Un chiffre perdu par la lecture (« 120 » lu « 20 ») fait donc refuser le prix au lieu de l'accepter.
+        val white = Mat()
+        Core.inRange(num, Scalar(225.0, 225.0, 225.0), Scalar(255.0, 255.0, 255.0), white)
+        val cs2 = Mat()
+        Core.reduce(white, cs2, 0, Core.REDUCE_SUM, CvType.CV_32S)
+        val arr2 = IntArray(white.cols())
+        cs2.get(0, 0, arr2)
+        var first = -1
+        var last = -1
+        for (i in arr2.indices) if (arr2[i] >= 255 * 2) { if (first < 0) first = i; last = i }
+        white.release(); cs2.release()
+        shopDlgW = if (first >= 0) (last - first + 1) / sc else 0.0
+        if (v >= 0) {
+            val nd = v.toString().length
+            if (shopDlgW <= 0.0 || (shopDlgW >= 68 && nd <= 2) || (shopDlgW <= 64 && nd >= 3)) v = -1
         }
         return Pair('g', v)
     }
