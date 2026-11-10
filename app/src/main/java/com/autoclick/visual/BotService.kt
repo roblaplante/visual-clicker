@@ -796,15 +796,15 @@ class BotService : Service() {
         }
     }
 
-    private fun ocrText(src: Mat, dark: Boolean = false): String {
+    private fun ocrText(src: Mat, dark: Boolean = false, thr: Int = 0): String {
         return try {
             val gray = Mat()
             Imgproc.cvtColor(src, gray, if (src.channels() == 4) Imgproc.COLOR_RGBA2GRAY else Imgproc.COLOR_RGB2GRAY)
             val big = Mat()
             Imgproc.resize(gray, big, Size(), 4.0, 4.0, Imgproc.INTER_CUBIC)
             val bin = Mat()
-            if (dark) Imgproc.threshold(big, bin, 150.0, 255.0, Imgproc.THRESH_BINARY) // texte sombre -> noir
-            else Imgproc.threshold(big, bin, 170.0, 255.0, Imgproc.THRESH_BINARY_INV) // texte blanc -> noir
+            if (dark) Imgproc.threshold(big, bin, if (thr > 0) thr.toDouble() else 150.0, 255.0, Imgproc.THRESH_BINARY) // texte sombre -> noir
+            else Imgproc.threshold(big, bin, if (thr > 0) thr.toDouble() else 170.0, 255.0, Imgproc.THRESH_BINARY_INV) // texte blanc -> noir
             val padded = Mat()
             Core.copyMakeBorder(bin, padded, 20, 20, 20, 20, Core.BORDER_CONSTANT, Scalar(255.0))
             val bmp = Bitmap.createBitmap(padded.cols(), padded.rows(), Bitmap.Config.ARGB_8888)
@@ -2632,6 +2632,8 @@ class BotService : Service() {
     private var shopCheckDone = false
     private val shopVerify = HashSet<Int>()
     private var shopDlgFirst = 0L
+    private var shopDlgRetry = 0
+    private var shopDlgOcr = ""
     private var shopLastSig = ""
     private var shopSameCnt = 0
     private var shopUnknownAt = 0L
@@ -2641,7 +2643,7 @@ class BotService : Service() {
     private fun resetShop() {
         shopSig = ""; shopWaitUntil = 0L; shopBuys = 0; shopOpened = -1; shopUnknownAt = 0L
         shopExpect = null; shopFail = 0; shopOpenTries = 0; shopLastSlot = -1; shopLastSig = ""; shopSameCnt = 0
-        shopCheckDone = false; shopVerify.clear(); shopDlgFirst = 0L
+        shopCheckDone = false; shopVerify.clear(); shopDlgFirst = 0L; shopDlgRetry = 0
         shopSkipSig = Array(6) { "" }
         shopReads = emptyList()
     }
@@ -2728,6 +2730,13 @@ class BotService : Service() {
             if (now - shopDlgFirst < 350L) return
             shopDlgFirst = 0L
             val dr = shopDialogRead(rgb)
+            if (dr.first == 'g' && dr.second < 0 && shopDlgRetry < 4) {
+                // prix illisible (animation, reflet) : la fenêtre reste ouverte, on relit un peu plus tard
+                shopDlgRetry++
+                shopDlgFirst = now - 150L
+                return
+            }
+            shopDlgRetry = 0
             val exp = shopExpect
             // Achat seulement si la fenêtre confirme ce qu'on attendait : ressources, ou cristaux lus et <= 65.
             // Prix illisible, prix > 65, fenêtre inattendue ou type différent : on ferme sans acheter.
@@ -2742,9 +2751,10 @@ class BotService : Service() {
                 else -> false
             }
             if (!ok) {
-                if (shopOpened in 0..5) shopSkipSig[shopOpened] = shopSigOf(shopOpened)
+                // prix simplement illisible : on ne bloque pas la case, elle sera retentée (3 touches au plus)
+                if (shopOpened in 0..5 && dr.second >= 0) shopSkipSig[shopOpened] = shopSigOf(shopOpened)
                 if (!verifying) shopFail++ // un contrôle qui confirme « trop cher » n'est pas un échec
-                val why = "attendu ${exp?.let { shopDesc(it) } ?: "rien"}, lu ${shopDesc(dr)}, largeur ${shopDlgW.toInt()}"
+                val why = "attendu ${exp?.let { shopDesc(it) } ?: "rien"}, lu ${shopDesc(dr)}, largeur ${shopDlgW.toInt()}, texte [$shopDlgOcr]"
                 clickRef(983.0, 882.0, "daily : Marchand : fenêtre Acheter refusée ($why), fermée sans acheter")
                 shopOpened = -1
                 shopExpect = null
@@ -2790,7 +2800,7 @@ class BotService : Service() {
             !skipped && (reads[i].first == 'r' ||
                 (reads[i].first == 'g' && (shopOk(reads[i].second) || i in shopVerify)))
         }
-        if (shopFail >= 6) { shopFinish("trop de fenêtres Acheter refusées : arrêt par sécurité"); return }
+        if (shopFail >= 8) { shopFinish("trop de fenêtres Acheter refusées : arrêt par sécurité"); return }
         if (buy != null) {
             if (shopBuys >= 400) { shopFinish("400 achats atteints"); return }
             val bsig = "${reads[buy].first}${reads[buy].second}"
@@ -2890,10 +2900,15 @@ class BotService : Service() {
         val sx = minOf(xb + 4, bw - 12)
         val num = Mat(btn, Rect(sx, 0, bw - sx, bh))
         var v = -1
-        for (dark in listOf(false, true)) {
-            v = digitsOf(ocrText(num, dark))
+        val raws = ArrayList<String>()
+        // texte blanc sur fond orange : seuil haut d'abord (le fond orange est proche de 170 en niveaux de gris)
+        for ((dark, thr) in listOf(false to 225, false to 200, false to 170, true to 150)) {
+            val raw = ocrText(num, dark, thr)
+            raws.add(raw.replace("\n", " ").trim())
+            v = digitsOf(raw)
             if (v >= 0) break
         }
+        shopDlgOcr = raws.joinToString("/")
         // Contrôle par la largeur du texte blanc (référence 1080 px) : 2 chiffres ≈ 45–60 px, 3 chiffres ≈ 76–95 px.
         // Un chiffre perdu par la lecture (« 120 » lu « 20 ») fait donc refuser le prix au lieu de l'accepter.
         val white = Mat()
