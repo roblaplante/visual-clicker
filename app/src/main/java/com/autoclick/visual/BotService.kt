@@ -575,6 +575,8 @@ class BotService : Service() {
 
     // ---------- Détection & clic ----------
 
+    private var lastTickError = ""
+
     private val tick = object : Runnable {
         override fun run() {
             try {
@@ -590,7 +592,9 @@ class BotService : Service() {
                         detectAndClick(g, c, m)
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                val m = e.javaClass.simpleName + " " + (e.message ?: "")
+                if (m != lastTickError) { lastTickError = m; log("erreur interne : $m") }
             }
             handler.postDelayed(this, interval)
         }
@@ -3188,6 +3192,7 @@ class BotService : Service() {
     private var bqPageSince = 0L
     private var bqChestTries = 0
     private var bqSwipes = 0
+    private var bqSame = 0
     private var bqBottom = false
     private var bqSig: DoubleArray? = null
     private var bqLeft = 0
@@ -3205,6 +3210,7 @@ class BotService : Service() {
         bqPageSince = now
         bqChestTries = 0
         bqSwipes = 0
+        bqSame = 0
         bqBottom = false
         bqSig = null
         bqLeft = 0
@@ -3246,7 +3252,8 @@ class BotService : Service() {
                 val a = (start / sc).toInt()
                 val b = (last / sc).toInt()
                 val cur = best
-                if (b - a >= 200 && (cur == null || b - a > cur.second - cur.first)) best = Pair(a, b)
+                val okWidth = b - a >= 200 || ((b >= 1000 || a <= 40) && b - a >= 100) // onglet coupé au bord de l'écran
+                if (okWidth && (cur == null || b - a > cur.second - cur.first)) best = Pair(a, b)
             }
             start = -1
         }
@@ -3424,11 +3431,13 @@ class BotService : Service() {
             bqPageSince = now
             bqChestTries = 0
             bqSwipes = 0
+            bqSame = 0
             bqBottom = false
             bqSig = null
             bqBtnClicks.clear()
         }
-        var selDot = dots.any { it >= sel.first + 150 && it <= sel.second + 12 }
+        val selMin = sel.first + minOf(150, (sel.second - sel.first) / 2)
+        var selDot = dots.any { it >= selMin && it <= sel.second + 12 }
         if (selDot && key in bqStuck) selDot = false
         if (selDot && now - bqPageSince > 25_000L) {
             bqStuck.add(key)
@@ -3466,16 +3475,23 @@ class BotService : Service() {
             if (!bqBottom && bqSwipes < 8) {
                 val sig = bqContentSig(rgb)
                 val prev = bqSig
+                bqSig = sig
                 if (prev != null && bqSwipes > 0 && bqSigDiff(prev, sig) < 2.5) {
-                    bqBottom = true
+                    bqSame++
+                    if (bqSame >= 2) {
+                        bqBottom = true
+                    } else {
+                        bqWaitUntil = now + 1200L // la page a-t-elle fini de défiler ? on relit avant de conclure
+                        return
+                    }
                 } else {
-                    bqSig = sig
+                    bqSame = 0
                     bqSwipes++
                     lastClick = now
                     val sc = rgb.cols() / 1080.0
                     ClickAccessibilityService.instance?.swipe((1010 * sc).toFloat(), (1900 * sc).toFloat(), (1010 * sc).toFloat(), (900 * sc).toFloat(), 900)
                     log("daily : Boutiques : glissement vers le bas ($bqSwipes)")
-                    bqWaitUntil = now + 1500L
+                    bqWaitUntil = now + 2500L
                     return
                 }
             }
@@ -3484,14 +3500,14 @@ class BotService : Service() {
             log("daily : Boutiques : bas de page atteint, point rouge toujours là, on passe")
         }
         // Onglet suivant à point rouge (le plus à gauche)
-        val cand = dots.filter { it < sel.first + 150 || it > sel.second + 12 }.sorted().firstOrNull { x ->
-            val sg = bqTabSig(rgb, x - 130)
+        val cand = dots.filter { it < selMin || it > sel.second + 12 }.sorted().firstOrNull { x ->
+            val sg = bqTabSig(rgb, maxOf(30, x - 90))
             sg == null || bqIgnore.none { bqSameSig(it, sg) }
         }
         if (cand != null && bqVisits < 14) {
             bqVisits++
-            bqCurSig = bqTabSig(rgb, cand - 130)
-            clickRef((cand - 130).toDouble(), 300.0, "daily : Boutiques : onglet à point rouge ($bqVisits)")
+            bqCurSig = bqTabSig(rgb, maxOf(30, cand - 90))
+            clickRef(maxOf(30, cand - 90).toDouble(), 300.0, "daily : Boutiques : onglet à point rouge ($bqVisits)")
             bqWaitUntil = now + 1300L
             return
         }
