@@ -2151,15 +2151,20 @@ class BotService : Service() {
         val recruit = ocrRef(rgb, 40, 2110, 560, 2165, true)
         if ("prochain" in recruit || "gratuit" in recruit) {
             dailyIdleAt = now
-            if (dailyStep == 0 && colorFrac(rgb, 287.0, 1690.0, Scalar(55.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.3 && dailyBtn < 1) {
+            // bouton vert « Recruter une fois Gratuit » : on mesure tout le bouton (le texte blanc au centre fausse un petit point)
+            val green = colorRect(rgb, 90, 1640, 490, 1735, Scalar(50.0, 90.0, 100.0), Scalar(90.0, 255.0, 255.0))
+            if (dailyStep == 0 && green >= 0.3 && dailyBtn < 1) {
                 dailyBtn++
                 dailyStep = 1
                 clickRef(287.0, 1690.0, "daily : Recrutement avancé : clic Recruter une fois (gratuit) n°$dailyBtn")
+            } else if (dailyStep == 0 && dailyBtn < 1 && (dailyActAt == 0L || now - dailyActAt < 2_500L)) {
+                // bouton pas (encore) vert : l'écran finit de s'afficher, on le relit pendant 2,5 s avant de conclure
+                if (dailyActAt == 0L) dailyActAt = now
             } else {
                 dailyStep = 3
                 lastClick = now
                 backArrow()
-                log("daily : Recrutement : un seul recrutement par passage, retour")
+                log("daily : Recrutement : pas de recrutement gratuit à faire (vert ${"%.2f".format(green)}), retour")
             }
             return
         }
