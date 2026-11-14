@@ -1624,7 +1624,7 @@ class BotService : Service() {
     }
 
     private fun loadDaily() {
-        for (path in listOf("daily/coffre_bulle.png", "daily/goutte.png", "daily/golem.png")) {
+        for (path in listOf("daily/coffre_bulle.png", "daily/goutte.png", "daily/golem.png", "daily/bonus_collecte.png")) {
             val m = loadAsset(path) ?: continue
             farm[path.substringAfter('/').removeSuffix(".png")] = m
         }
@@ -1723,6 +1723,24 @@ class BotService : Service() {
                 // Avant chaque tentative : l'icône « Ordres » (balance, en bas à droite) a-t-elle un point rouge ?
                 val barText = ocrRef(rgb, 0, 2270, 1080, 2335)
                 val cityVisible = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in barText } >= 2
+                // Tout premier préambule : bonus de vitesse de collecte (icône du chariot à droite de la flèche, en haut à gauche)
+                if (cityVisible && (dailyAttempts["bonus"] ?: 0) < 2) {
+                    val corr = bonusIconScore(screen)
+                    if (corr < 0.65) {
+                        dailyAttempts["bonus"] = (dailyAttempts["bonus"] ?: 0) + 1
+                        dailyState = "BONUS"
+                        dailyStep = 0
+                        dailyBtn = 0
+                        dailyGrey = 0
+                        dailyActAt = now
+                        dailyIdleAt = now
+                        dailyStepAt = now
+                        bonusBox = false
+                        bonusBuys = 0
+                        clickRef(50.0, 262.0, "daily : Bonus de collecte : icône absente (corrélation ${"%.2f".format(corr)}), ouverture de Revenu de la Ville")
+                        return
+                    }
+                }
                 if (cityVisible && (dailyAttempts["ordres"] ?: 0) < 2 && redDotOnOrders(rgb)) {
                     dailyAttempts["ordres"] = (dailyAttempts["ordres"] ?: 0) + 1
                     dailyState = "ORDRES"
@@ -1897,6 +1915,7 @@ class BotService : Service() {
             "CREUSET" -> detectCreuset(rgb, now)
             "MARCHAND" -> detectMarchand(rgb, now)
             "VIP" -> detectVip(rgb, now)
+            "BONUS" -> detectBonus(rgb, now)
         }
     }
 
@@ -3122,6 +3141,139 @@ class BotService : Service() {
         dailyTaskDone("Marchand nomade")
     }
 
+
+    // ---------- Bonus de collecte (premier préambule du Daily) ----------
+
+    private var bonusBox = false
+    private var bonusBuys = 0
+
+    /** Corrélation de l'icône « chariot » (bonus de collecte actif) dans la rangée d'icônes à droite de la flèche, en haut à gauche. 1.0 si on ne peut pas mesurer. */
+    private fun bonusIconScore(screen: Mat): Double {
+        val t = farm["bonus_collecte"] ?: return 1.0
+        val f = screen.cols() / 1080.0
+        val x0 = (90 * f).toInt()
+        val y0 = (222 * f).toInt()
+        val x1 = minOf((720 * f).toInt(), screen.cols())
+        val y1 = minOf((300 * f).toInt(), screen.rows())
+        if (x1 - x0 < t.cols() || y1 - y0 < t.rows()) return 1.0
+        val sub = Mat(screen, Rect(x0, y0, x1 - x0, y1 - y0))
+        return matchBest(sub, t)?.maxVal ?: 1.0
+    }
+
+    /** Texte blanc (titres, prix sur bouton orange) : seuils hauts d'abord. */
+    private fun ocrRefWhite(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): String {
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bx = minOf((x1 * sc).toInt(), rgb.cols())
+        val by = minOf((y1 * sc).toInt(), rgb.rows())
+        if (bx <= ax || by <= ay) return ""
+        val crop = Mat(rgb, Rect(ax, ay, bx - ax, by - ay))
+        var t = ocrText(crop, false, 225)
+        if (t.isBlank()) t = ocrText(crop, false, 200)
+        return t.lowercase()
+    }
+
+    private fun bonusDone(msg: String) {
+        log("daily : Bonus de collecte : $msg")
+        lastClick = SystemClock.uptimeMillis()
+        backArrow()
+        dailyAttempts["bonus"] = 2
+        dailyTaskDone("Bonus de collecte")
+    }
+
+    /**
+     * Bonus de collecte : flèche en haut à gauche > « Revenu de la Ville » > onglet Expansion > ligne « Vitesse de Collecte »
+     * (si elle montre un temps et sa barre verte : déjà actif, on ne fait rien) > « Utiliser » du boost 24 h > « Obtenir plus »
+     * > « Acheter 600 » > fenêtre « Acheter » : case « Ne plus afficher pour aujourd'hui », puis gros bouton jaune 600 >
+     * le boost s'active tout seul > flèche bleue.
+     */
+    private fun detectBonus(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Bonus de collecte abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        val orangeLo = Scalar(10.0, 140.0, 190.0)
+        val orangeHi = Scalar(32.0, 255.0, 255.0)
+        // 1) fenêtre « Acheter » (confirmation) : gros bouton jaune au centre
+        if (colorRect(rgb, 335, 1385, 745, 1485, orangeLo, orangeHi) >= 0.4) {
+            dailyIdleAt = now
+            val msg = ocrRef(rgb, 150, 1075, 930, 1195, true)
+            val price = ocrRefWhite(rgb, 500, 1395, 720, 1475)
+            val digits = (msg + " " + price).filter { it.isDigit() || it == ' ' }
+            val is600 = "600" in price.filter { it.isDigit() } || "600" in msg.filter { it.isDigit() }
+            if (!is600 && now - dailyStepAt < 4_000L) return // prix pas encore lisible : on relit
+            if (!is600) {
+                log("daily : Bonus de collecte : prix 600 non confirmé dans la fenêtre Acheter (lu «${digits.trim()}»), fermeture")
+                clickRef(955.0, 922.0, "daily : Bonus de collecte : fenêtre fermée sans acheter")
+                dailyAttempts["bonus"] = 2
+                dailyState = "OPEN"
+                return
+            }
+            if (!bonusBox) {
+                bonusBox = true
+                dailyActAt = now
+                clickRef(275.0, 1318.0, "daily : Bonus de collecte : case « Ne plus afficher pour aujourd'hui »")
+                return
+            }
+            if (now - dailyActAt < 500L) return
+            if (bonusBuys >= 2) return
+            bonusBuys++
+            dailyActAt = now
+            clickRef(540.0, 1435.0, "daily : Bonus de collecte : achat 600 gemmes (n° $bonusBuys)")
+            return
+        }
+        // 2) fenêtre « Obtenir plus » : bouton « Acheter 600 »
+        if (colorRect(rgb, 745, 795, 995, 880, orangeLo, orangeHi) >= 0.35) {
+            dailyIdleAt = now
+            val name = ocrRef(rgb, 255, 565, 880, 625, true)
+            val price = ocrRefWhite(rgb, 800, 840, 945, 885).filter { it.isDigit() }
+            if (price.isNotEmpty() && price != "600") {
+                log("daily : Bonus de collecte : prix lu $price (600 attendu), fenêtre fermée sans acheter")
+                clickRef(1003.0, 470.0, "daily : Bonus de collecte : fenêtre Obtenir plus fermée")
+                dailyAttempts["bonus"] = 2
+                return
+            }
+            if (price != "600" && now - dailyStepAt < 4_000L) return
+            if ("24" !in name && now - dailyStepAt < 4_000L) return
+            clickRef(870.0, 837.0, "daily : Bonus de collecte : Acheter (Obtenir plus)")
+            dailyStepAt = now
+            return
+        }
+        // 3) écran « Revenu de la Ville »
+        val title = ocrRef(rgb, 130, 90, 760, 200)
+        if ("revenu" in title || "ville" in title) {
+            dailyIdleAt = now
+            val expSel = colorRect(rgb, 600, 215, 1000, 235, Scalar(0.0, 0.0, 200.0), Scalar(179.0, 60.0, 255.0)) >= 0.6
+            if (!expSel) {
+                if (dailyBtn++ < 4) clickRef(797.0, 262.0, "daily : Bonus de collecte : onglet Expansion")
+                return
+            }
+            val bar = colorRect(rgb, 260, 985, 930, 1025, Scalar(40.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.4
+            val use24 = colorRect(rgb, 775, 1370, 1000, 1455, Scalar(80.0, 100.0, 150.0), Scalar(105.0, 255.0, 255.0)) >= 0.3
+            if (bar) { bonusDone("boost actif (temps et barre verte), flèche retour"); return }
+            if (use24) {
+                if (bonusBuys > 0 && now - dailyActAt < 3_000L) return // achat fait : on attend l'activation
+                val row = ocrRefWhite(rgb, 255, 1340, 760, 1490)
+                if ("24" !in row && now - dailyStepAt < 4_000L) return
+                if (dailyGrey++ >= 3) { bonusDone("« Utiliser » 24 h touché 3 fois sans effet, abandon"); return }
+                dailyActAt = now
+                clickRef(885.0, 1415.0, "daily : Bonus de collecte : Utiliser (boost 24 h)")
+                dailyStepAt = now
+                return
+            }
+            // ligne repliée : on la touche pour afficher les boosts
+            val row = ocrRef(rgb, 240, 850, 940, 905, true)
+            if ("vitesse" in row || "collecte" in row) {
+                if (dailyTries++ < 4) clickRef(500.0, 935.0, "daily : Bonus de collecte : ligne Vitesse de Collecte")
+                else bonusDone("ligne Vitesse de Collecte sans effet, abandon")
+            }
+        }
+    }
 
     /**
      * VIP : écran VIP > coffre en haut à droite (s'il a son point rouge) > écran « Récompenses » (appui dans le vide) >
