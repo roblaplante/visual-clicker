@@ -44,6 +44,7 @@ import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
+import org.opencv.core.MatOfPoint
 import org.opencv.core.Rect
 import org.opencv.core.Scalar
 import org.opencv.core.Size
@@ -1825,6 +1826,20 @@ class BotService : Service() {
                     farmClick(gx, gy + (60 * w / 1080.0).toFloat(), "daily : Combat : icône Assaut Rebelle, ouverture")
                     return
                 }
+                // Tout dernier préambule : boutiques (panier + gemmes en haut à droite avec un point rouge)
+                if (cityVisible && (dailyAttempts["shop"] ?: 0) < 2 && redRect(rgb, 1050, 82, 1080, 114) >= 0.15) {
+                    dailyAttempts["shop"] = (dailyAttempts["shop"] ?: 0) + 1
+                    dailyState = "SHOP"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyGrey = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    resetShop(now)
+                    clickRef(975.0, 125.0, "daily : Boutiques : point rouge sur le panier, ouverture")
+                    return
+                }
                 val tabs = ocrRef(rgb, 15, 615, 665, 695)
                 val open = "ville" in tabs || "nature" in tabs || "quot" in tabs
                 if (open) {
@@ -1938,6 +1953,7 @@ class BotService : Service() {
             "VIP" -> detectVip(rgb, now)
             "BONUS" -> detectBonus(rgb, now)
             "PET" -> detectPet(rgb, now)
+            "SHOP" -> detectShop(rgb, now)
         }
     }
 
@@ -3163,6 +3179,337 @@ class BotService : Service() {
         dailyTaskDone("Marchand nomade")
     }
 
+
+    // ---------- Boutiques coffre + weekly (dernier préambule : point rouge sur le panier en haut à droite) ----------
+
+    private var shopStartAt = 0L
+    private var shopWaitUntil = 0L
+    private var shopPageKey = -1
+    private var shopPageSince = 0L
+    private var shopChestTries = 0
+    private var shopSwipes = 0
+    private var shopBottom = false
+    private var shopSig: DoubleArray? = null
+    private var shopLeft = 0
+    private var shopRight = 0
+    private var shopVisits = 0
+    private var shopCurSig: DoubleArray? = null
+    private val shopIgnore = ArrayList<DoubleArray>()
+    private val shopStuck = HashSet<Int>()
+    private val shopBtnClicks = HashMap<Int, Int>()
+
+    private fun resetShop(now: Long) {
+        shopStartAt = now
+        shopWaitUntil = now + 1800L
+        shopPageKey = -1
+        shopPageSince = now
+        shopChestTries = 0
+        shopSwipes = 0
+        shopBottom = false
+        shopSig = null
+        shopLeft = 0
+        shopRight = 0
+        shopVisits = 0
+        shopCurSig = null
+        shopIgnore.clear()
+        shopStuck.clear()
+        shopBtnClicks.clear()
+    }
+
+    /** Pastille rouge (les deux plages de teinte) : part de pixels rouges dans un rectangle. */
+    private fun redRect(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Double =
+        colorRect(rgb, x0, y0, x1, y1, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0)) +
+            colorRect(rgb, x0, y0, x1, y1, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0))
+
+    /** Onglet sélectionné (fond blanc en haut de la barre d'onglets) : (x début, x fin) en référence 1080, ou null. */
+    private fun shopSelectedTab(rgb: Mat): Pair<Int, Int>? {
+        val sc = rgb.cols() / 1080.0
+        val ay = (233 * sc).toInt()
+        val by = (241 * sc).toInt()
+        if (by <= ay || by > rgb.rows()) return null
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(0, ay, rgb.cols(), by - ay)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, Scalar(0.0, 0.0, 225.0), Scalar(179.0, 50.0, 255.0), m)
+        val cs = Mat()
+        Core.reduce(m, cs, 0, Core.REDUCE_SUM, CvType.CV_32S)
+        val arr = IntArray(m.cols())
+        cs.get(0, 0, arr)
+        val need = m.rows() * 255 / 2
+        hsv.release(); m.release(); cs.release()
+        var best: Pair<Int, Int>? = null
+        var start = -1
+        var last = -1
+        val gap = (30 * sc).toInt()
+        fun close() {
+            if (start >= 0) {
+                val a = (start / sc).toInt()
+                val b = (last / sc).toInt()
+                val cur = best
+                if (b - a >= 200 && (cur == null || b - a > cur.second - cur.first)) best = Pair(a, b)
+            }
+            start = -1
+        }
+        for (x in arr.indices) {
+            if (arr[x] >= need) {
+                if (start < 0) start = x
+                last = x
+            } else if (start >= 0 && x - last > gap) close()
+        }
+        close()
+        return best
+    }
+
+    /** Points rouges des onglets (en haut à droite de chaque onglet) : abscisses de référence, hors pastilles « ! » des bords. */
+    private fun shopTabDots(rgb: Mat): List<Int> {
+        val sc = rgb.cols() / 1080.0
+        val ay = (238 * sc).toInt()
+        val by = (258 * sc).toInt()
+        if (by <= ay || by > rgb.rows()) return emptyList()
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(0, ay, rgb.cols(), by - ay)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m1 = Mat()
+        val m2 = Mat()
+        Core.inRange(hsv, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0), m1)
+        Core.inRange(hsv, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0), m2)
+        Core.bitwise_or(m1, m2, m1)
+        val cs = Mat()
+        Core.reduce(m1, cs, 0, Core.REDUCE_SUM, CvType.CV_32S)
+        val arr = IntArray(m1.cols())
+        cs.get(0, 0, arr)
+        hsv.release(); m1.release(); m2.release(); cs.release()
+        val out = ArrayList<Int>()
+        var start = -1
+        var last = -1
+        fun close() {
+            if (start >= 0) {
+                val wRef = (last - start + 1) / sc
+                val cx = ((start + last) / 2.0 / sc).toInt()
+                if (wRef in 10.0..34.0 && cx in 110..990) out.add(cx)
+            }
+            start = -1
+        }
+        for (x in arr.indices) {
+            if (arr[x] >= 255 * 4) {
+                if (start < 0) start = x
+                last = x
+            } else close()
+        }
+        close()
+        return out
+    }
+
+    /** Signature (couleurs moyennes) de l'icône d'un onglet : sert à ne pas revenir sur un onglet qui n'a rien donné. */
+    private fun shopTabSig(rgb: Mat, cx: Int): DoubleArray? {
+        val sc = rgb.cols() / 1080.0
+        val x0 = ((cx - 45) * sc).toInt()
+        val x1 = ((cx + 45) * sc).toInt()
+        val y0 = (262 * sc).toInt()
+        val y1 = (332 * sc).toInt()
+        if (x0 < 0 || x1 > rgb.cols() || y1 > rgb.rows() || x1 <= x0 || y1 <= y0) return null
+        val ym = (y0 + y1) / 2
+        val a = Core.mean(Mat(rgb, Rect(x0, y0, x1 - x0, ym - y0))).`val`
+        val b = Core.mean(Mat(rgb, Rect(x0, ym, x1 - x0, y1 - ym))).`val`
+        return doubleArrayOf(a[0], a[1], a[2], b[0], b[1], b[2])
+    }
+
+    private fun shopSameSig(a: DoubleArray, b: DoubleArray): Boolean {
+        var d = 0.0
+        for (i in a.indices) d += Math.abs(a[i] - b[i])
+        return d < 30.0
+    }
+
+    /** Signature de la page (aperçu 16×32 en gris) : sert à voir si le glissement a fait bouger la page (sinon : bas atteint). */
+    private fun shopContentSig(rgb: Mat): DoubleArray {
+        val sc = rgb.cols() / 1080.0
+        val ax = (60 * sc).toInt()
+        val ay = (380 * sc).toInt()
+        val bx = minOf((1020 * sc).toInt(), rgb.cols())
+        val by = minOf((2300 * sc).toInt(), rgb.rows())
+        val gray = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(ax, ay, bx - ax, by - ay)), gray, Imgproc.COLOR_RGB2GRAY)
+        val small = Mat()
+        Imgproc.resize(gray, small, Size(16.0, 32.0), 0.0, 0.0, Imgproc.INTER_AREA)
+        val bytes = ByteArray(16 * 32)
+        small.get(0, 0, bytes)
+        gray.release(); small.release()
+        return DoubleArray(bytes.size) { (bytes[it].toInt() and 0xFF).toDouble() }
+    }
+
+    private fun shopSigDiff(a: DoubleArray, b: DoubleArray): Double {
+        var d = 0.0
+        for (i in a.indices) d += Math.abs(a[i] - b[i])
+        return d / a.size
+    }
+
+    /** Larges boutons verts (« Récupérer ») de la page : rectangles (x0, y0, x1, y1) en référence, de haut en bas. */
+    private fun shopGreens(rgb: Mat): List<IntArray> {
+        val sc = rgb.cols() / 1080.0
+        val ax = (60 * sc).toInt()
+        val ay = (380 * sc).toInt()
+        val bx = minOf((1020 * sc).toInt(), rgb.cols())
+        val by = minOf((2300 * sc).toInt(), rgb.rows())
+        if (bx <= ax || by <= ay) return emptyList()
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(ax, ay, bx - ax, by - ay)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m = Mat()
+        Core.inRange(hsv, Scalar(40.0, 120.0, 110.0), Scalar(82.0, 255.0, 255.0), m)
+        val k = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(maxOf(3.0, 25 * sc), maxOf(3.0, 25 * sc)))
+        Imgproc.morphologyEx(m, m, Imgproc.MORPH_CLOSE, k)
+        val cnts = ArrayList<MatOfPoint>()
+        Imgproc.findContours(m, cnts, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
+        val out = ArrayList<IntArray>()
+        for (c in cnts) {
+            val r = Imgproc.boundingRect(c)
+            val wr = r.width / sc
+            val hr = r.height / sc
+            if (wr >= 300 && hr in 80.0..170.0 && wr / hr >= 2.2) {
+                val fill = Core.countNonZero(Mat(m, r)).toDouble() / (r.width * r.height)
+                if (fill >= 0.6) out.add(intArrayOf(((r.x + ax) / sc).toInt(), ((r.y + ay) / sc).toInt(), ((r.x + r.width + ax) / sc).toInt(), ((r.y + r.height + ay) / sc).toInt()))
+            }
+            c.release()
+        }
+        hsv.release(); m.release()
+        return out.sortedBy { it[1] }
+    }
+
+    /** Mini coffre à récupérer : « Récupérable » (en haut à droite) ou « Gratuit » (à gauche). Renvoie le point à toucher. */
+    private fun shopChest(rgb: Mat): Pair<Double, Double>? {
+        val a = ocrRefWhite(rgb, 840, 535, 1060, 595)
+        if ("cup" in a || "rabl" in a) return 945.0 to 505.0
+        val b = ocrRefWhite(rgb, 40, 725, 225, 785)
+        if ("grat" in b || "ratu" in b) return 130.0 to 690.0
+        return null
+    }
+
+    private fun shopExit(msg: String, now: Long) {
+        lastClick = now
+        backArrow()
+        dailyAttempts["shop"] = 2
+        log("daily : Boutiques : $msg")
+        dailyTaskDone("Boutiques coffre + weekly")
+    }
+
+    /**
+     * Boutiques : panier (point rouge) > onglets à point rouge de gauche à droite > mini coffre (« Récupérable » / « Gratuit », puis
+     * « Récupéré(es) » : appui n'importe où) et boutons verts « Récupérer » (on glisse vers le bas jusqu'au dernier) > pastille « ! »
+     * au bord de la barre d'onglets pour retrouver les points rouges oubliés > flèche bleue. Jamais de bouton orange (en €).
+     */
+    private fun detectShop(rgb: Mat, now: Long) {
+        if (now < shopWaitUntil) return
+        if (now - shopStartAt > 180_000L) { shopExit("trop long (3 min), sortie", now); return }
+        val rw = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in rw || "quitter" in rw) {
+            dailyIdleAt = now
+            tapRewards("daily : Boutiques : récompense : appui n'importe où")
+            shopWaitUntil = now + 700L
+            return
+        }
+        val sel = shopSelectedTab(rgb)
+        if (sel == null) {
+            if (now - dailyIdleAt > 10_000L) {
+                log("daily : Boutiques abandonnées (10 s sans écran reconnu)")
+                lastClick = now
+                backArrow()
+                dailyState = "OPEN"
+                dailyTries = 0
+            }
+            return
+        }
+        dailyIdleAt = now
+        val dots = shopTabDots(rgb)
+        val key = sel.first / 40
+        if (key != shopPageKey) {
+            shopPageKey = key
+            shopPageSince = now
+            shopChestTries = 0
+            shopSwipes = 0
+            shopBottom = false
+            shopSig = null
+            shopBtnClicks.clear()
+        }
+        var selDot = dots.any { it >= sel.first + 150 && it <= sel.second + 12 }
+        if (selDot && key in shopStuck) selDot = false
+        if (selDot && now - shopPageSince > 25_000L) {
+            shopStuck.add(key)
+            shopCurSig?.let { shopIgnore.add(it) }
+            log("daily : Boutiques : onglet resté avec son point rouge après 25 s, on passe")
+            selDot = false
+        }
+        if (selDot) {
+            // 1. mini coffre (en haut de page seulement)
+            if (shopSwipes == 0 && shopChestTries < 3) {
+                val c = shopChest(rgb)
+                if (c != null) {
+                    shopChestTries++
+                    clickRef(c.first, c.second, "daily : Boutiques : mini coffre touché")
+                    shopWaitUntil = now + 1700L
+                    return
+                }
+            }
+            // 2. boutons verts « Récupérer »
+            for (g in shopGreens(rgb)) {
+                val bk = g[1] / 80
+                if ((shopBtnClicks[bk] ?: 0) >= 3) continue
+                val t = ocrRefWhite(rgb, g[0], g[1], g[2], g[3])
+                shopBtnClicks[bk] = (shopBtnClicks[bk] ?: 0) + 1
+                if ("cup" in t || "rer" in t) {
+                    clickRef(((g[0] + g[2]) / 2).toDouble(), ((g[1] + g[3]) / 2).toDouble(), "daily : Boutiques : bouton vert « Récupérer » touché")
+                    shopWaitUntil = now + 1300L
+                    return
+                } else {
+                    shopBtnClicks[bk] = 3
+                    log("daily : Boutiques : bouton vert sans « Récupérer » (texte «${t.trim().take(20)}»), ignoré")
+                }
+            }
+            // 3. glisser vers le bas jusqu'au bout de la page
+            if (!shopBottom && shopSwipes < 8) {
+                val sig = shopContentSig(rgb)
+                val prev = shopSig
+                if (prev != null && shopSwipes > 0 && shopSigDiff(prev, sig) < 2.5) {
+                    shopBottom = true
+                } else {
+                    shopSig = sig
+                    shopSwipes++
+                    lastClick = now
+                    val sc = rgb.cols() / 1080.0
+                    ClickAccessibilityService.instance?.swipe((1010 * sc).toFloat(), (1900 * sc).toFloat(), (1010 * sc).toFloat(), (900 * sc).toFloat(), 900)
+                    log("daily : Boutiques : glissement vers le bas ($shopSwipes)")
+                    shopWaitUntil = now + 1500L
+                    return
+                }
+            }
+            shopStuck.add(key)
+            shopCurSig?.let { shopIgnore.add(it) }
+            log("daily : Boutiques : bas de page atteint, point rouge toujours là, on passe")
+        }
+        // Onglet suivant à point rouge (le plus à gauche)
+        val cand = dots.filter { it < sel.first + 150 || it > sel.second + 12 }.sorted().firstOrNull { x ->
+            val sg = shopTabSig(rgb, x - 130)
+            sg == null || shopIgnore.none { shopSameSig(it, sg) }
+        }
+        if (cand != null && shopVisits < 14) {
+            shopVisits++
+            shopCurSig = shopTabSig(rgb, cand - 130)
+            clickRef((cand - 130).toDouble(), 300.0, "daily : Boutiques : onglet à point rouge ($shopVisits)")
+            shopWaitUntil = now + 1300L
+            return
+        }
+        // Pastilles « ! » : onglets cachés avec un point rouge
+        if (redRect(rgb, 985, 250, 1055, 300) >= 0.2 && shopRight < 3) {
+            shopRight++
+            clickRef(1018.0, 275.0, "daily : Boutiques : pastille « ! » à droite ($shopRight)")
+            shopWaitUntil = now + 1300L
+            return
+        }
+        if (redRect(rgb, 25, 250, 100, 300) >= 0.2 && shopLeft < 3) {
+            shopLeft++
+            clickRef(60.0, 275.0, "daily : Boutiques : pastille « ! » à gauche ($shopLeft)")
+            shopWaitUntil = now + 1300L
+            return
+        }
+        shopExit("plus de point rouge, sortie (flèche bleue)", now)
+    }
 
     // ---------- Pet Skill (préambule : patte d'ours avec point rouge) ----------
 
