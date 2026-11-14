@@ -1756,6 +1756,7 @@ class BotService : Service() {
                 if (cityVisible && (dailyAttempts["ordres"] ?: 0) < 2 && redDotOnOrders(rgb)) {
                     dailyAttempts["ordres"] = (dailyAttempts["ordres"] ?: 0) + 1
                     dailyState = "ORDRES"
+                    ordresChecked = false
                     dailyStep = 0
                     dailyBtn = 0
                     dailyActAt = now
@@ -2114,14 +2115,15 @@ class BotService : Service() {
     // livres de l'écran « Ordre du Gouverneur » à activer, dans l'ordre : x, y du livre puis zone du bandeau
     private val ordresBooks = listOf(
         intArrayOf(330, 1680, 200, 1655, 470, 1715), // Journée de la Productivité
-        intArrayOf(740, 790, 610, 760, 880, 820), // Travail Urgent
-        intArrayOf(740, 1680, 610, 1655, 880, 1715) // Festivités
+        intArrayOf(740, 790, 610, 760, 880, 820) // Travail Urgent
     )
+    private var ordresChecked = false // les deux livres ont-ils été vus disponibles en même temps ?
 
     /**
-     * Ordres : icône (balance) > « Ordre du Gouverneur » > pour chaque livre (Productivité, Travail Urgent,
-     * Festivités) sans bandeau « Actif » / « Se recharge » : livre > « Aventure » > (récompenses) ; puis flèche
-     * bleue pour revenir à la ville.
+     * Ordres : icône (balance) > « Ordre du Gouverneur » > on vérifie d'abord que les DEUX livres (Productivité et
+     * Travail Urgent) sont disponibles en même temps (ni « Actif » ni « Se recharge ») ; si l'un ne l'est pas, on
+     * n'active rien et on revient à la ville. Sinon, pour chaque livre : livre > « Aventure » > (récompenses) ;
+     * puis flèche bleue pour revenir à la ville.
      */
     private fun detectOrdres(rgb: Mat, now: Long) {
         if (now - dailyIdleAt > 10_000L) {
@@ -2165,6 +2167,19 @@ class BotService : Service() {
                 backArrow()
                 log("daily : Ordres : tous les ordres vus, retour à la ville")
                 return
+            }
+            if (!ordresChecked) {
+                val f0 = lightFrac(rgb, ordresBooks[0][2], ordresBooks[0][3], ordresBooks[0][4], ordresBooks[0][5])
+                val f1 = lightFrac(rgb, ordresBooks[1][2], ordresBooks[1][3], ordresBooks[1][4], ordresBooks[1][5])
+                if (f0 >= 0.3 || f1 >= 0.3) {
+                    dailyAttempts["ordres"] = 2
+                    dailyStep = ordresBooks.size
+                    lastClick = now
+                    backArrow()
+                    log("daily : Ordres : les deux ne sont pas disponibles en même temps (Productivité ${if (f0 >= 0.3) "indisponible" else "dispo"}, Travail Urgent ${if (f1 >= 0.3) "indisponible" else "dispo"}), rien activé")
+                    return
+                }
+                ordresChecked = true
             }
             val b = ordresBooks[dailyStep]
             if (lightFrac(rgb, b[2], b[3], b[4], b[5]) >= 0.3) {
