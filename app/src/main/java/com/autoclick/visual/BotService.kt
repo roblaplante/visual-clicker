@@ -3646,6 +3646,7 @@ class BotService : Service() {
     // ---------- Pet Skill (préambule : patte d'ours avec point rouge) ----------
 
     private var petIdx = 0
+    private var petDiagAt = 0L
     private var petState = 0 // 0 = toucher l'icône, 1 = lire le panneau et « Utiliser », 2 = attendre le résultat
     private var petAt = 0L
     private var petTries = 0
@@ -3687,7 +3688,16 @@ class BotService : Service() {
             val cage = ocrRefWhite(rgb, 830, 2080, 1070, 2150)
             win = "cage" in cage || "bête" in cage || "bete" in cage
         }
-        if (!win) return
+        // 3e moyen : bandeau beige du haut de la fenêtre (texte illisible, par exemple animation d'ouverture)
+        val tan = colorRect(rgb, 60, 450, 980, 515, Scalar(5.0, 40.0, 190.0), Scalar(22.0, 120.0, 248.0))
+        if (!win) win = tan >= 0.5
+        if (!win) {
+            if (now - dailyIdleAt > 4_000L && now - petDiagAt > 4_000L) {
+                petDiagAt = now
+                log("daily : Pet Skill : fenêtre non reconnue (titre «${head.trim().take(25)}», bandeau beige ${(tan * 100).toInt()} %)")
+            }
+            return
+        }
         dailyIdleAt = now
         if (petIdx >= petCols.size) {
             dailyAttempts["pet"] = 2
