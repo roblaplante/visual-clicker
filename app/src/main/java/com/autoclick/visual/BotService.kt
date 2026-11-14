@@ -782,17 +782,17 @@ class BotService : Service() {
 
     /** Lit un texte blanc sur fond sombre (ML Kit) ; chaîne vide si illisible. */
     /** Ligne de texte reconnue : texte + centre vertical (en pixels de l'image source). */
-    private class OcrLine(val text: String, val cy: Double)
+    private class OcrLine(val text: String, val cy: Double, val cx: Double = 0.0)
 
     /** Texte ligne par ligne avec position. dark = texte sombre sur fond clair (fenêtres beiges du jeu). */
-    private fun ocrLines(src: Mat, dark: Boolean): List<OcrLine> {
+    private fun ocrLines(src: Mat, dark: Boolean, thr: Int = 0): List<OcrLine> {
         return try {
             val gray = Mat()
             Imgproc.cvtColor(src, gray, if (src.channels() == 4) Imgproc.COLOR_RGBA2GRAY else Imgproc.COLOR_RGB2GRAY)
             val big = Mat()
             Imgproc.resize(gray, big, Size(), 4.0, 4.0, Imgproc.INTER_CUBIC)
             val bin = Mat()
-            Imgproc.threshold(big, bin, if (dark) 150.0 else 170.0, 255.0, if (dark) Imgproc.THRESH_BINARY else Imgproc.THRESH_BINARY_INV)
+            Imgproc.threshold(big, bin, if (thr > 0) thr.toDouble() else if (dark) 150.0 else 170.0, 255.0, if (dark) Imgproc.THRESH_BINARY else Imgproc.THRESH_BINARY_INV)
             val padded = Mat()
             Core.copyMakeBorder(bin, padded, 20, 20, 20, 20, Core.BORDER_CONSTANT, Scalar(255.0))
             val bmp = Bitmap.createBitmap(padded.cols(), padded.rows(), Bitmap.Config.ARGB_8888)
@@ -801,7 +801,7 @@ class BotService : Service() {
             val res = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 5, TimeUnit.SECONDS)
             bmp.recycle()
             res.textBlocks.flatMap { it.lines }.mapNotNull { l ->
-                l.boundingBox?.let { OcrLine(l.text, ((it.top + it.bottom) / 2.0 - 20) / 4.0) }
+                l.boundingBox?.let { OcrLine(l.text, ((it.top + it.bottom) / 2.0 - 20) / 4.0, ((it.left + it.right) / 2.0 - 20) / 4.0) }
             }
         } catch (_: Exception) {
             emptyList()
@@ -3440,12 +3440,68 @@ class BotService : Service() {
         return out.sortedBy { it[1] }
     }
 
-    /** Mini coffre à récupérer : « Récupérable » (en haut à droite) ou « Gratuit » (à gauche). Renvoie le point à toucher. */
+    /** Petite pastille rouge ronde (point rouge d'un coffre) dans une zone : centre en référence, ou null. */
+    private fun bqRedBlob(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Pair<Double, Double>? {
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bx = minOf((x1 * sc).toInt(), rgb.cols())
+        val by = minOf((y1 * sc).toInt(), rgb.rows())
+        if (bx <= ax || by <= ay) return null
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(ax, ay, bx - ax, by - ay)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m1 = Mat()
+        val m2 = Mat()
+        Core.inRange(hsv, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0), m1)
+        Core.inRange(hsv, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0), m2)
+        Core.bitwise_or(m1, m2, m1)
+        val cnts = ArrayList<MatOfPoint>()
+        Imgproc.findContours(m1, cnts, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
+        var best: Pair<Double, Double>? = null
+        for (c in cnts) {
+            val r = Imgproc.boundingRect(c)
+            val wr = r.width / sc
+            val hr = r.height / sc
+            if (wr in 12.0..40.0 && hr in 12.0..40.0 && wr / hr in 0.7..1.4) {
+                val fill = Core.countNonZero(Mat(m1, r)).toDouble() / (r.width * r.height)
+                val cy = (r.y + r.height / 2.0 + ay) / sc
+                if (fill >= 0.6 && (best == null || cy < best.second)) best = Pair((r.x + r.width / 2.0 + ax) / sc, cy)
+            }
+            c.release()
+        }
+        hsv.release(); m1.release(); m2.release()
+        return best
+    }
+
+    /**
+     * Mini coffre à récupérer (« Récupérable » ou « Gratuit ») : sa place change d'un onglet à l'autre, donc on lit le texte
+     * de l'en-tête de la page (position du mot) ; à défaut, on cherche son point rouge en haut à droite. Renvoie le point à toucher.
+     */
     private fun bqChest(rgb: Mat): Pair<Double, Double>? {
-        val a = ocrRefWhite(rgb, 840, 535, 1060, 595)
-        if ("cup" in a || "rabl" in a) return 945.0 to 505.0
-        val b = ocrRefWhite(rgb, 40, 725, 225, 785)
-        if ("grat" in b || "ratu" in b) return 130.0 to 690.0
+        val sc = rgb.cols() / 1080.0
+        val x0 = (20 * sc).toInt()
+        val y0 = (380 * sc).toInt()
+        val x1 = minOf((1075 * sc).toInt(), rgb.cols())
+        val y1 = minOf((820 * sc).toInt(), rgb.rows())
+        if (x1 > x0 && y1 > y0) {
+            val crop = Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0))
+            for (thr in intArrayOf(225, 200)) {
+                for (l in ocrLines(crop, false, thr)) {
+                    val t = l.text.lowercase()
+                    if ("cup" in t || "rabl" in t || "grat" in t || "ratu" in t) {
+                        val lx = (x0 + l.cx) / sc
+                        val ly = (y0 + l.cy) / sc
+                        log("daily : Boutiques : mot «${t.trim().take(16)}» repéré en (${lx.toInt()}, ${ly.toInt()})")
+                        return Pair(lx, ly - 58.0)
+                    }
+                }
+            }
+        }
+        val d = bqRedBlob(rgb, 760, 380, 1075, 700)
+        if (d != null) {
+            log("daily : Boutiques : point rouge de coffre repéré en (${d.first.toInt()}, ${d.second.toInt()})")
+            return Pair(d.first - 52.0, d.second + 33.0)
+        }
         return null
     }
 
