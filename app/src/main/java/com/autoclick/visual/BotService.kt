@@ -1737,7 +1737,8 @@ class BotService : Service() {
                         dailyStepAt = now
                         bonusBox = false
                         bonusBuys = 0
-                        clickRef(50.0, 262.0, "daily : Bonus de collecte : icône absente (corrélation ${"%.2f".format(corr)}), ouverture de Revenu de la Ville")
+                        bonusAsk = 0
+                        clickRef(70.0, 240.0, "daily : Bonus de collecte : icône absente (corrélation ${"%.2f".format(corr)}), ouverture de Revenu de la Ville")
                         return
                     }
                 }
@@ -3146,6 +3147,7 @@ class BotService : Service() {
 
     private var bonusBox = false
     private var bonusBuys = 0
+    private var bonusAsk = 0
 
     /** Corrélation de l'icône « chariot » (bonus de collecte actif) dans la rangée d'icônes à droite de la flèche, en haut à gauche. 1.0 si on ne peut pas mesurer. */
     private fun bonusIconScore(screen: Mat): Double {
@@ -3220,6 +3222,7 @@ class BotService : Service() {
                 clickRef(275.0, 1318.0, "daily : Bonus de collecte : case « Ne plus afficher pour aujourd'hui »")
                 return
             }
+            if (bonusBuys > 0 && now - dailyActAt < 3_500L) return // achat fait : la fenêtre peut rester un instant, on ne rachète pas
             if (now - dailyActAt < 500L) return
             if (bonusBuys >= 2) return
             bonusBuys++
@@ -3240,6 +3243,10 @@ class BotService : Service() {
             }
             if (price != "600" && now - dailyStepAt < 4_000L) return
             if ("24" !in name && now - dailyStepAt < 4_000L) return
+            if (bonusAsk > 0 && now - dailyActAt < 3_500L) return // déjà touché : on laisse la fenêtre suivante s'afficher
+            if (bonusAsk >= 2) { bonusDone("Acheter touché 2 fois sans effet, abandon"); return }
+            bonusAsk++
+            dailyActAt = now
             clickRef(870.0, 837.0, "daily : Bonus de collecte : Acheter (Obtenir plus)")
             dailyStepAt = now
             return
