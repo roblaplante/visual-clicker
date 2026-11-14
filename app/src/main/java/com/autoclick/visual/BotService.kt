@@ -1841,6 +1841,7 @@ class BotService : Service() {
                     val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence
                     dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
                     dailyState = key.uppercase()
+                    if (key == "fontaine") resetFontaine()
                     dailyStep = 0
                     dailyBtn = 0
                     dailyGrey = 0
@@ -2294,6 +2295,7 @@ class BotService : Service() {
             dailyTries = 0
             return
         }
+        if (dailyStep >= 20 && fontPhase > 0 && fontProsperite(rgb, now)) return
         if (conqueteScreens(rgb, now)) return
         // île « Mon île » : gouttes, puis Conquête, ou sortie
         val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
@@ -2305,7 +2307,13 @@ class BotService : Service() {
         val island = drop != null || (labels >= 2 && "ville" in bar && "monde" !in bar) || "mon" in title && "le" in title
         if (island) {
             dailyIdleAt = now
-            if (dailyStep >= 20) { // retour de Conquête : on sort aussi de l'île
+            if (dailyStep >= 20 && fontPhase == 0 && redDotAt(rgb, 1044.0, 203.0)) {
+                // retour de Conquête : point rouge sur le trophée (Île de la Prospérité) : on l'ouvre
+                fontPhase = 1
+                fontPhaseAt = now
+                fontWaitUntil = now + 1200
+                clickRef(1005.0, 240.0, "daily : Fontaine Vitale : point rouge sur le trophée, ouverture de l'Île de la Prospérité")
+            } else if (dailyStep >= 20) { // retour de Conquête (ou des îles amies) : on sort aussi de l'île
                 lastClick = now
                 backArrow()
                 dailyTaskDone("Fontaine Vitale")
@@ -2338,6 +2346,154 @@ class BotService : Service() {
 
     private var dropSeenAt = 0L
     private var lastFontLog = 0L
+
+    // Île de la Prospérité (trophée de « Mon île ») : 0 = pas commencé, 1 = liste attendue, 2 = île d'ami attendue, 3 = sur une île d'ami
+    private var fontPhase = 0
+    private var fontVisits = 0
+    private var fontSwipes = 0
+    private var fontTaps = 0
+    private var fontListClicks = 0
+    private var fontExit = false
+    private var fontWaitUntil = 0L
+    private var fontPhaseAt = 0L
+
+    private fun resetFontaine() {
+        fontPhase = 0; fontVisits = 0; fontSwipes = 0; fontTaps = 0; fontListClicks = 0; fontExit = false; fontWaitUntil = 0L; fontPhaseAt = 0L
+    }
+
+    /** Ordonnées (référence 1080) des points rouges de la colonne des symboles, dans la liste de l'Île de la Prospérité, de haut en bas. */
+    private fun listRedDots(rgb: Mat): List<Double> {
+        val sc = rgb.cols() / 1080.0
+        val x0 = (975 * sc).toInt()
+        val y0 = (445 * sc).toInt()
+        val x1 = minOf((1030 * sc).toInt(), rgb.cols())
+        val y1 = minOf((2095 * sc).toInt(), rgb.rows())
+        if (x1 <= x0 || y1 <= y0) return emptyList()
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), hsv, Imgproc.COLOR_RGB2HSV)
+        val m1 = Mat()
+        val m2 = Mat()
+        Core.inRange(hsv, Scalar(0.0, 150.0, 150.0), Scalar(8.0, 255.0, 255.0), m1)
+        Core.inRange(hsv, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0), m2)
+        Core.bitwise_or(m1, m2, m1)
+        val cs = Mat()
+        Core.reduce(m1, cs, 1, Core.REDUCE_SUM, CvType.CV_32S)
+        val arr = IntArray(m1.rows())
+        cs.get(0, 0, arr)
+        hsv.release(); m1.release(); m2.release(); cs.release()
+        val out = ArrayList<Double>()
+        var start = -1
+        var last = -1
+        fun close() {
+            if (start >= 0 && (last - start + 1) / sc >= 10.0) out.add((y0 + (start + last) / 2.0) / sc)
+            start = -1
+        }
+        for (i in arr.indices) {
+            if (arr[i] >= 255 * 3) {
+                if (start < 0) start = i
+                last = i
+            } else if (start >= 0 && i - last > 2) close()
+        }
+        close()
+        return out
+    }
+
+    /**
+     * Après Conquête, si « Mon île » montre un point rouge sur le trophée : liste « Île de la Prospérité » (premier point rouge
+     * de haut en bas, sinon on fait défiler de 6 lignes) > île d'un ami (bulle d'eau, puis trophée s'il a encore son point
+     * rouge, sinon flèche bleue) ; trois îles amies en tout. Renvoie true tant que l'écran courant fait partie de ce parcours.
+     */
+    private fun fontProsperite(rgb: Mat, now: Long): Boolean {
+        if (now < fontWaitUntil) return true // on laisse l'écran suivant s'afficher
+        val title = ocrRef(rgb, 130, 90, 760, 200)
+        var list = "prosp" in title
+        var friend = false
+        if (!list && "le de" in title) {
+            val tabs = ocrRef(rgb, 0, 215, 1080, 320)
+            if ("royaume" in tabs || "alliance" in tabs) list = true else friend = true
+        }
+        if (!list && !friend && "royaume" in ocrRef(rgb, 0, 215, 1080, 320)) list = true
+        if (list) {
+            dailyIdleAt = now
+            if (fontPhase >= 2) fontPhase = 1
+            if (fontVisits >= 6 || fontListClicks >= 10) {
+                fontExit = true
+                lastClick = now
+                backArrow()
+                fontWaitUntil = now + 1000
+                log("daily : Fontaine Vitale : trop de visites, sortie de la liste")
+                return true
+            }
+            val ys = listRedDots(rgb)
+            if (ys.isNotEmpty()) {
+                fontListClicks++
+                fontSwipes = 0
+                fontPhase = 2
+                fontPhaseAt = now
+                fontWaitUntil = now + 1500
+                clickRef(968.0, ys[0] + 33.0, "daily : Fontaine Vitale : liste, premier point rouge (clic sur le symbole, n° $fontListClicks)")
+            } else if (fontSwipes < 6) {
+                fontSwipes++
+                fontWaitUntil = now + 1500
+                val sc = w / 1080.0
+                ClickAccessibilityService.instance?.swipe((540 * sc).toFloat(), (1850 * sc).toFloat(), (540 * sc).toFloat(), (650 * sc).toFloat(), 1100)
+                lastClick = now + 800
+                log("daily : Fontaine Vitale : pas de point rouge visible, la liste défile ($fontSwipes)")
+            } else {
+                fontExit = true
+                lastClick = now
+                backArrow()
+                fontWaitUntil = now + 1000
+                log("daily : Fontaine Vitale : plus aucun point rouge dans la liste, flèche retour")
+            }
+            return true
+        }
+        if (friend) {
+            dailyIdleAt = now
+            if (fontPhase == 2) {
+                fontPhase = 3
+                fontVisits++
+                fontTaps = 0
+                fontWaitUntil = now + 800
+                log("daily : Fontaine Vitale : île d'ami n° $fontVisits")
+            }
+            if (fontExit) { // on a quitté la liste : retour sur « Mon île »
+                lastClick = now
+                backArrow()
+                fontWaitUntil = now + 1000
+                return true
+            }
+            val bubble = colorRect(rgb, 490, 500, 600, 610, Scalar(0.0, 0.0, 225.0), Scalar(179.0, 40.0, 255.0)) >= 0.25
+            if (bubble && fontTaps < 3) {
+                fontTaps++
+                fontWaitUntil = now + 1800
+                clickRef(544.0, 559.0, "daily : Fontaine Vitale : île d'ami n° $fontVisits, clic sur la bulle d'eau ($fontTaps)")
+                return true
+            }
+            if (redDotAt(rgb, 1044.0, 203.0) && fontVisits < 6) {
+                fontPhase = 1
+                fontPhaseAt = now
+                fontWaitUntil = now + 1200
+                clickRef(1005.0, 240.0, "daily : Fontaine Vitale : point rouge sur le trophée, retour à la liste")
+            } else {
+                lastClick = now
+                backArrow()
+                fontWaitUntil = now + 1000
+                log("daily : Fontaine Vitale : plus de point rouge sur le trophée, flèche retour vers Mon île")
+            }
+            return true
+        }
+        // fenêtre de récompenses éventuelle (bandeau « appuie n'importe où »)
+        val reward = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in reward || "quitter" in reward) {
+            dailyIdleAt = now
+            tapRewards("daily : Fontaine Vitale : récompenses : appui n'importe où")
+            return true
+        }
+        // retour sur « Mon île » : le parcours est fini, la suite se fait dans l'écran de l'île
+        if ("mon" in title && "le" in title && (fontPhase == 3 || fontExit || now - fontPhaseAt > 5_000L)) return false
+        return true // écran en transition : on attend (10 s sans rien reconnu : abandon)
+    }
 
     /**
      * Combat (Assaut Rebelle) : icône du golem en haut à gauche > fenêtre « Défi Rapide » > écran « Victoire ! »
