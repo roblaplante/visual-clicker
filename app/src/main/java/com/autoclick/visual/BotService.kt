@@ -2473,6 +2473,8 @@ class BotService : Service() {
     private var fontPhase = 0
     private var fontVisits = 0
     private var fontSwipes = 0
+    private var fontArrivedAt = 0L
+    private var fontBubbleSeenAt = 0L
     private var fontTaps = 0
     private var fontListClicks = 0
     private var fontExit = false
@@ -2576,7 +2578,9 @@ class BotService : Service() {
                 fontPhase = 3
                 fontVisits++
                 fontTaps = 0
-                fontWaitUntil = now + 800
+                fontArrivedAt = now
+                fontBubbleSeenAt = 0L
+                fontWaitUntil = now + 1500
                 log("daily : Fontaine Vitale : île d'ami n° $fontVisits")
             }
             if (fontExit) { // on a quitté la liste : retour sur « Mon île »
@@ -2586,6 +2590,13 @@ class BotService : Service() {
                 return true
             }
             val bubble = colorRect(rgb, 490, 500, 600, 610, Scalar(0.0, 0.0, 225.0), Scalar(179.0, 40.0, 255.0)) >= 0.25
+            if (bubble && fontTaps == 0 && fontBubbleSeenAt == 0L) {
+                // bulle repérée : on lui laisse un instant pour s'afficher complètement avant de toucher
+                fontBubbleSeenAt = now
+                fontWaitUntil = now + 600
+                return true
+            }
+            if (!bubble && fontTaps == 0 && now - fontArrivedAt < 5_000L) return true // l'île finit de s'afficher : on attend la bulle
             if (bubble && fontTaps < 3) {
                 fontTaps++
                 fontWaitUntil = now + 1800
