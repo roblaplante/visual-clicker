@@ -194,6 +194,8 @@ class BotService : Service() {
             loadDaily()
         } else if (mode == "marchand") {
             loadMarchand()
+        } else if (mode == "epreuves") {
+            loadEpreuves()
         } else {
             loadTemplates()
             loadGate()
@@ -232,6 +234,7 @@ class BotService : Service() {
                     "hunt" -> loadHunt()
                     "daily" -> loadDaily()
                     "marchand" -> loadMarchand()
+                    "epreuves" -> loadEpreuves()
                     else -> {
                         loadTemplates()
                         loadGate()
@@ -616,6 +619,10 @@ class BotService : Service() {
         }
         if (mode == "marchand") {
             detectMarchandSolo(rgb)
+            return
+        }
+        if (mode == "epreuves") {
+            detectEpreuves(rgb)
             return
         }
         val now = SystemClock.uptimeMillis()
@@ -3242,6 +3249,100 @@ class BotService : Service() {
         }
     }
 
+    // ---------- Épreuves Mystiques (menu « Épreuves Mystiques », à la demande) ----------
+
+    private var epFinished = false
+    private var epClickedAt = 0L
+    private var epIdleAt = 0L
+    private var epBackTries = 0
+    private var epListTries = 0
+    private var epTabAt = 0L
+
+    private fun resetEpreuves() {
+        epFinished = false; epClickedAt = 0L; epIdleAt = SystemClock.uptimeMillis(); epBackTries = 0; epListTries = 0; epTabAt = 0L
+    }
+
+    private fun loadEpreuves() {
+        resetEpreuves()
+        log("épreuves mystiques : démarrage (à la demande)")
+    }
+
+    private fun epStop(msg: String) {
+        epFinished = true
+        log("épreuves mystiques : $msg")
+        main.post { pauseBot("Épreuves Mystiques : $msg") }
+    }
+
+    /**
+     * Point de départ : menu de gauche (languette), onglet « Quot. », ligne de la tâche sous « Épreuve Mystique »
+     * (son nom change : Colisée, Forêt de la Vie, Nexus de la Connaissance, Fort en Fusion, Flèche Éclatante…) :
+     * on touche son texte. La suite du parcours est à construire : l'appli s'arrête sur l'écran ouvert.
+     */
+    private fun detectEpreuves(rgb: Mat) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClick < minOf(cooldown, 600L) || epFinished) return
+        if (epClickedAt > 0L) {
+            if (now - epClickedAt > 2_500L) epStop("tâche touchée, écran ouvert (suite à construire)")
+            return
+        }
+        val rw = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in rw || "quitter" in rw) {
+            epIdleAt = now
+            tapRewards("épreuves mystiques : écran Récompenses : appui n'importe où")
+            return
+        }
+        val tabs = ocrRef(rgb, 15, 615, 665, 695)
+        if ("ville" in tabs || "nature" in tabs || "quot" in tabs) {
+            epIdleAt = now
+            epBackTries = 0
+            val q = meanV(rgb, 455, 625, 655, 685)
+            val v = meanV(rgb, 20, 625, 220, 685)
+            if (!(q > 150 && q > v + 40)) {
+                clickRef(553.0, 655.0, "épreuves mystiques : clic onglet Quot.")
+                return
+            }
+            val sc = rgb.cols() / 1080.0
+            val y0 = (695 * sc).toInt()
+            val x0 = (15 * sc).toInt()
+            val x1 = (665 * sc).toInt()
+            val y1 = minOf((1455 * sc).toInt(), rgb.rows())
+            val lines = ocrLines(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), false)
+            if (lines.isEmpty()) return
+            val names = listOf("colis", "forêt de la vie", "foret de la vie", "nexus", "fort en fusion", "flèche éclatante", "fleche eclatante")
+            val title = lines.firstOrNull { "mystique" in it.text.lowercase() }
+            val nameLine = lines.firstOrNull { l -> names.any { it in l.text.lowercase() } }
+            val clickY = when {
+                title != null -> (y0 + title.cy) / sc + 79.0 // la ligne de la tâche est sous le titre de section
+                nameLine != null -> (y0 + nameLine.cy) / sc + 21.0
+                else -> -1.0
+            }
+            if (clickY < 0) {
+                if (++epListTries > 6) epStop("« Épreuve Mystique » introuvable dans la liste Quot. (rien à faire ?)")
+                return
+            }
+            epClickedAt = now
+            clickRef(335.0, clickY, "épreuves mystiques : clic sur le texte de la tâche (y ${clickY.toInt()})")
+            return
+        }
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val city = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar } >= 2
+        if (city) {
+            epIdleAt = now
+            if (now - epTabAt > 2_500L) {
+                epTabAt = now
+                clickRef(20.0, 1075.0, "épreuves mystiques : ouverture du menu (languette)")
+            }
+            return
+        }
+        if (now - epIdleAt > 10_000L) {
+            epIdleAt = now
+            if (++epBackTries > 4) { epStop("écran inconnu, arrêt"); return }
+            lastClick = now
+            backArrow()
+            log("épreuves mystiques : écran inconnu, flèche retour")
+        }
+    }
+
     private var rewardTaps = 0
 
     /**
@@ -3737,6 +3838,7 @@ class BotService : Service() {
             }
             if (mode == "daily" && dailyFinished) resetDaily()
             if (mode == "marchand" && marchandFinished) resetMarchandSolo()
+            if (mode == "epreuves" && epFinished) resetEpreuves()
         }
         tv.text = if (running) "⏸" else "▶"
         (tv.background as GradientDrawable)

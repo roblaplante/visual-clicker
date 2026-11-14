@@ -35,7 +35,7 @@ import java.io.FileOutputStream
  */
 class MainActivity : AppCompatActivity() {
 
-    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?), 7 = Daily, 8 = Marchand nomade
+    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?), 7 = Daily, 8 = Marchand nomade, 9 = Épreuves Mystiques
     private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
     private var huntN = 5 // idem pour le hunt
     private lateinit var huntCountEdit: EditText
@@ -163,6 +163,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(button("Hunt (chasses de Terreur)") { showHuntChoice() })
         root.addView(button("Daily (tâches quotidiennes)") { showDaily() })
         root.addView(button("Marchand nomade") { showMarchand() })
+        root.addView(button("Épreuves Mystiques") { showEpreuves() })
 
         root.addView(label("Autorisations (à faire une seule fois)"))
         root.addView(button("Activer le service d'accessibilité") {
@@ -448,6 +449,25 @@ class MainActivity : AppCompatActivity() {
         root.addView(button("Démarrer") { start("marchand") })
     }
 
+    // ---------- Épreuves Mystiques (à la demande) ----------
+
+    private fun showEpreuves() {
+        screen = 9
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(TextView(this).apply { text = "Épreuves Mystiques"; textSize = 22f })
+        root.addView(
+            label(
+                "Point de départ (la suite se construit au fur et à mesure) : l'appli ouvre le menu de gauche " +
+                    "(languette), l'onglet « Quot. », puis touche le texte de la tâche sous « Épreuve Mystique » " +
+                    "(Colisée, Forêt de la Vie, Nexus de la Connaissance, Fort en Fusion, Flèche Éclatante…). " +
+                    "Elle s'arrête ensuite sur l'écran ouvert."
+            )
+        )
+        root.addView(label("Ouvrez le jeu sur la ville, puis démarrez."))
+        root.addView(button("Démarrer") { start("epreuves") })
+    }
+
     // ---------- Hunt (chasses de Terreur) ----------
 
     private fun showHuntChoice() {
@@ -523,7 +543,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
-        if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8) return
+        if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8 || screen == 9) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
