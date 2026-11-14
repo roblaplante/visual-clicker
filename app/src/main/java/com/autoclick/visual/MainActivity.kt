@@ -59,6 +59,9 @@ class MainActivity : AppCompatActivity() {
 
     // Farm
     private lateinit var grandCheck: CheckBox
+    private lateinit var bonusCheck: CheckBox
+    private lateinit var bonusFromEdit: EditText
+    private lateinit var bonusToEdit: EditText
     private lateinit var painEdit: EditText
     private lateinit var boisEdit: EditText
     private lateinit var pierreEdit: EditText
@@ -419,6 +422,18 @@ class MainActivity : AppCompatActivity() {
                     "Les scénarios arrivent tâche après tâche (en préparation). Pour l'instant : « Récomp. En Ligne »."
             )
         )
+        root.addView(label("Bonus de collecte (premier préambule)"))
+        bonusCheck = CheckBox(this).apply {
+            text = "Aller voir « Revenu de la Ville » même si l'icône du chariot est présente, seulement dans cette plage horaire (heure du téléphone). S'il reste moins de 2 h, le boost 24 h est racheté."
+            isChecked = sp.getBoolean("bonusForce", true)
+        }
+        root.addView(bonusCheck)
+        root.addView(label("De (heure, 0 à 23)"))
+        bonusFromEdit = numberField("bonusFrom", 6)
+        root.addView(bonusFromEdit)
+        root.addView(label("À (heure, 0 à 23)"))
+        bonusToEdit = numberField("bonusTo", 9)
+        root.addView(bonusToEdit)
         root.addView(label("Ouvrez le jeu sur la ville (ou la carte), menu de gauche fermé, puis démarrez."))
         root.addView(button("Démarrer") { start("daily") })
     }
@@ -543,6 +558,14 @@ class MainActivity : AppCompatActivity() {
 
     /** Les réglages de l'écran affiché sont gardés en mémoire à chaque sortie et au démarrage. */
     private fun saveSettings() {
+        if (screen == 7) {
+            sp.edit()
+                .putBoolean("bonusForce", bonusCheck.isChecked)
+                .putInt("bonusFrom", (bonusFromEdit.text.toString().toIntOrNull() ?: 6).coerceIn(0, 23))
+                .putInt("bonusTo", (bonusToEdit.text.toString().toIntOrNull() ?: 9).coerceIn(0, 23))
+                .apply()
+            return
+        }
         if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8 || screen == 9) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)

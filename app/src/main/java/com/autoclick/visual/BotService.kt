@@ -1629,7 +1629,11 @@ class BotService : Service() {
             farm[path.substringAfter('/').removeSuffix(".png")] = m
         }
         resetDaily()
-        log("daily : démarrage")
+        val cfg = getSharedPreferences("cfg", MODE_PRIVATE)
+        bonusForce = cfg.getBoolean("bonusForce", true)
+        bonusFrom = cfg.getInt("bonusFrom", 6).coerceIn(0, 23)
+        bonusTo = cfg.getInt("bonusTo", 9).coerceIn(0, 23)
+        log("daily : démarrage (bonus de collecte : visite forcée ${if (bonusForce) "de $bonusFrom h à $bonusTo h" else "désactivée"})")
     }
 
     /** Texte d'une zone (coordonnées de référence 1080 px). */
@@ -1726,7 +1730,8 @@ class BotService : Service() {
                 // Tout premier préambule : bonus de vitesse de collecte (icône du chariot à droite de la flèche, en haut à gauche)
                 if (cityVisible && (dailyAttempts["bonus"] ?: 0) < 2) {
                     val corr = bonusIconScore(screen)
-                    if (corr < 0.65) {
+                    val forced = corr >= 0.65 && bonusForce && bonusWindowNow()
+                    if (corr < 0.65 || forced) {
                         dailyAttempts["bonus"] = (dailyAttempts["bonus"] ?: 0) + 1
                         dailyState = "BONUS"
                         dailyStep = 0
@@ -1739,7 +1744,7 @@ class BotService : Service() {
                         bonusBuys = 0
                         bonusAsk = 0
                         bonusBarAt = 0L
-                        clickRef(70.0, 240.0, "daily : Bonus de collecte : icône absente (corrélation ${"%.2f".format(corr)}), ouverture de Revenu de la Ville")
+                        clickRef(70.0, 240.0, "daily : Bonus de collecte : ${if (forced) "icône présente mais visite forcée (plage $bonusFrom h-$bonusTo h)" else "icône absente"} (corrélation ${"%.2f".format(corr)}), ouverture de Revenu de la Ville")
                         return
                     }
                 }
@@ -3148,6 +3153,18 @@ class BotService : Service() {
 
     private var bonusBox = false
     private var bonusBuys = 0
+    private var bonusForce = true
+    private var bonusFrom = 6
+    private var bonusTo = 9
+
+    /** Heure du téléphone dans la plage réglée (de bonusFrom h 00 à bonusTo h 00, minuit franchi si De > À). */
+    private fun bonusWindowNow(): Boolean {
+        val c = java.util.Calendar.getInstance()
+        val m = c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
+        val a = bonusFrom * 60
+        val b = bonusTo * 60
+        return if (a <= b) m in a..b else (m >= a || m <= b)
+    }
     private var bonusAsk = 0
     private var bonusBarAt = 0L
 
