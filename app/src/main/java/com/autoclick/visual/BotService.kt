@@ -1797,6 +1797,20 @@ class BotService : Service() {
                     clickRef(990.0, 200.0, "daily : VIP : point rouge sur le badge, ouverture")
                     return
                 }
+                // Pet Skill : point rouge sur la patte d'ours (en bas à droite de la ville)
+                if (cityVisible && (dailyAttempts["pet"] ?: 0) < 2 && redDotAt(rgb, 1040.0, 1663.0)) {
+                    dailyAttempts["pet"] = (dailyAttempts["pet"] ?: 0) + 1
+                    dailyState = "PET"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyGrey = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    petIdx = 0; petState = 0; petAt = 0L; petTries = 0; petReward = false; petUsed = 0
+                    clickRef(995.0, 1710.0, "daily : Pet Skill : point rouge sur la patte d'ours, ouverture")
+                    return
+                }
                 // Puis l'événement « Assaut Rebelle » (golem rouge en haut à gauche, avec son minuteur)
                 val golem = if (cityVisible && (dailyAttempts["combat"] ?: 0) < 2) farmMatch(screen, "golem", 0.8) else null
                 if (golem != null) {
@@ -1923,6 +1937,7 @@ class BotService : Service() {
             "MARCHAND" -> detectMarchand(rgb, now)
             "VIP" -> detectVip(rgb, now)
             "BONUS" -> detectBonus(rgb, now)
+            "PET" -> detectPet(rgb, now)
         }
     }
 
@@ -3148,6 +3163,99 @@ class BotService : Service() {
         dailyTaskDone("Marchand nomade")
     }
 
+
+    // ---------- Pet Skill (préambule : patte d'ours avec point rouge) ----------
+
+    private var petIdx = 0
+    private var petState = 0 // 0 = toucher l'icône, 1 = lire le panneau et « Utiliser », 2 = attendre le résultat
+    private var petAt = 0L
+    private var petTries = 0
+    private var petReward = false
+    private var petUsed = 0
+    private val petCols = intArrayOf(420, 640, 860, 420)
+    private val petRows = intArrayOf(715, 715, 715, 935)
+    private val petNames = arrayOf("", "titan", "odeur", "roi") // lynx, bison (Poignée du Titan), lionne (Maîtrise des odeurs), lion (Cadeau du Roi)
+    private val petLabels = arrayOf("lynx", "bison", "lionne", "lion")
+
+    private fun petNext() {
+        petIdx++; petState = 0; petTries = 0; petReward = false
+    }
+
+    /**
+     * Pet Skill : patte d'ours (point rouge) > « Compétence de l'Animal » : lynx, bison, lionne, lion (jamais le loup) : on touche
+     * l'icône, on lit le panneau du bas (bouton « Utiliser » vert = disponible ; « Actif » ou « Se recharge » = on saute), on
+     * touche « Utiliser », on ferme l'écran « Récompenses » s'il vient ; puis croix en haut à droite.
+     */
+    private fun detectPet(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Pet Skill abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        val rw = ocrRef(rgb, 200, 2150, 880, 2240)
+        if ("appuie" in rw || "quitter" in rw) {
+            dailyIdleAt = now
+            petReward = true
+            tapRewards("daily : Pet Skill : récompenses : appui n'importe où")
+            return
+        }
+        val head = ocrRefWhite(rgb, 280, 445, 800, 520)
+        var win = "animal" in head || "comp" in head
+        if (!win) {
+            val cage = ocrRefWhite(rgb, 830, 2080, 1070, 2150)
+            win = "cage" in cage || "bête" in cage || "bete" in cage
+        }
+        if (!win) return
+        dailyIdleAt = now
+        if (petIdx >= petCols.size) {
+            dailyAttempts["pet"] = 2
+            clickRef(1003.0, 480.0, "daily : Pet Skill : $petUsed compétence(s) utilisée(s), fermeture (croix)")
+            dailyTaskDone("Pet Skill")
+            return
+        }
+        when (petState) {
+            0 -> {
+                petState = 1
+                petAt = now
+                clickRef(petCols[petIdx].toDouble(), petRows[petIdx].toDouble(), "daily : Pet Skill : ${petLabels[petIdx]} touché")
+            }
+            1 -> {
+                if (now - petAt < 600L) return
+                val title = ocrRef(rgb, 95, 1435, 800, 1495, true)
+                if (title.isBlank() || "lectionne" in title) { // panneau pas encore mis à jour
+                    if (now - petAt < 2_000L) return
+                    if (petTries < 1) { petTries++; petState = 0; return }
+                    log("daily : Pet Skill : ${petLabels[petIdx]} : panneau illisible, on saute")
+                    petNext()
+                    return
+                }
+                val nameOk = petNames[petIdx].isEmpty() || petNames[petIdx] in title
+                if (!nameOk) {
+                    if (petTries < 1) { petTries++; petState = 0; return }
+                    log("daily : Pet Skill : ${petLabels[petIdx]} : nom inattendu («${title.trim().take(30)}»), on saute")
+                    petNext()
+                    return
+                }
+                val green = colorRect(rgb, 340, 1830, 740, 1935, Scalar(40.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.5
+                if (green) {
+                    petUsed++
+                    petState = 2
+                    petAt = now
+                    petReward = false
+                    clickRef(540.0, 1883.0, "daily : Pet Skill : ${petLabels[petIdx]} : Utiliser («${title.trim().take(30)}»)")
+                } else {
+                    log("daily : Pet Skill : ${petLabels[petIdx]} : déjà active ou en recharge, on saute")
+                    petNext()
+                }
+            }
+            else -> {
+                if (petReward || now - petAt > 2_800L) petNext()
+            }
+        }
+    }
 
     // ---------- Bonus de collecte (premier préambule du Daily) ----------
 
