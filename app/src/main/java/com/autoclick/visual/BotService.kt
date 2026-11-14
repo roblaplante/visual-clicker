@@ -1757,6 +1757,8 @@ class BotService : Service() {
                     dailyAttempts["ordres"] = (dailyAttempts["ordres"] ?: 0) + 1
                     dailyState = "ORDRES"
                     ordresChecked = false
+                    ordresFest = false
+                    ordresFestAt = 0L
                     dailyStep = 0
                     dailyBtn = 0
                     dailyActAt = now
@@ -2115,9 +2117,20 @@ class BotService : Service() {
     // livres de l'écran « Ordre du Gouverneur » à activer, dans l'ordre : x, y du livre puis zone du bandeau
     private val ordresBooks = listOf(
         intArrayOf(330, 1680, 200, 1655, 470, 1715), // Journée de la Productivité
-        intArrayOf(740, 790, 610, 760, 880, 820) // Travail Urgent
+        intArrayOf(740, 790, 610, 760, 880, 820), // Travail Urgent
+        intArrayOf(740, 1680, 610, 1655, 880, 1715) // Festivités (en dernier, seulement si les deux autres sont actifs)
     )
     private var ordresChecked = false // les deux livres ont-ils été vus disponibles en même temps ?
+    private var ordresFest = false // Festivités autorisée (les deux autres sont « Actif »)
+    private var ordresFestAt = 0L
+
+    /** Le bandeau du livre n°i affiche-t-il « Actif » (et pas « Se recharge ») ? */
+    private fun ordresActive(rgb: Mat, i: Int): Boolean {
+        val bannerY = if (i == 0) 1625 else 735 // haut de la zone du bandeau, au-dessus de celle du test de luminosité
+        val bx = if (i == 0) 190 else 600
+        val t = ocrRef(rgb, bx, bannerY, bx + 290, bannerY + 130, true)
+        return "acti" in t && "recharg" !in t
+    }
 
     /**
      * Ordres : icône (balance) > « Ordre du Gouverneur » > on vérifie d'abord que les DEUX livres (Productivité et
@@ -2173,6 +2186,14 @@ class BotService : Service() {
                 val f1 = lightFrac(rgb, ordresBooks[1][2], ordresBooks[1][3], ordresBooks[1][4], ordresBooks[1][5])
                 if (f0 >= 0.3 || f1 >= 0.3) {
                     dailyAttempts["ordres"] = 2
+                    if (f0 >= 0.3 && f1 >= 0.3 && ordresActive(rgb, 0) && ordresActive(rgb, 1)) {
+                        // les deux sont déjà actifs : on finit par Festivités
+                        ordresChecked = true
+                        ordresFest = true
+                        dailyStep = 2
+                        log("daily : Ordres : Productivité et Travail Urgent déjà actifs, on passe à Festivités")
+                        return
+                    }
                     dailyStep = ordresBooks.size
                     lastClick = now
                     backArrow()
@@ -2180,6 +2201,19 @@ class BotService : Service() {
                     return
                 }
                 ordresChecked = true
+            }
+            // Festivités en dernier : seulement si Productivité et Travail Urgent sont tous les deux « Actif »
+            if (dailyStep == 2 && !ordresFest) {
+                if (ordresFestAt == 0L) { ordresFestAt = now; return }
+                if (now - ordresFestAt < 900L) return
+                if (ordresActive(rgb, 0) && ordresActive(rgb, 1)) {
+                    ordresFest = true
+                    log("daily : Ordres : les deux sont actifs, Festivités")
+                } else {
+                    log("daily : Ordres : les deux ne sont pas « Actif », pas de Festivités")
+                    dailyStep = ordresBooks.size
+                    return
+                }
             }
             val b = ordresBooks[dailyStep]
             if (lightFrac(rgb, b[2], b[3], b[4], b[5]) >= 0.3) {
