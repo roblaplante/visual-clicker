@@ -1738,6 +1738,7 @@ class BotService : Service() {
                         bonusBox = false
                         bonusBuys = 0
                         bonusAsk = 0
+                        bonusBarAt = 0L
                         clickRef(70.0, 240.0, "daily : Bonus de collecte : icône absente (corrélation ${"%.2f".format(corr)}), ouverture de Revenu de la Ville")
                         return
                     }
@@ -3148,6 +3149,7 @@ class BotService : Service() {
     private var bonusBox = false
     private var bonusBuys = 0
     private var bonusAsk = 0
+    private var bonusBarAt = 0L
 
     /** Corrélation de l'icône « chariot » (bonus de collecte actif) dans la rangée d'icônes à droite de la flèche, en haut à gauche. 1.0 si on ne peut pas mesurer. */
     private fun bonusIconScore(screen: Mat): Double {
@@ -3174,6 +3176,24 @@ class BotService : Service() {
         var t = ocrText(crop, false, 225)
         if (t.isBlank()) t = ocrText(crop, false, 200)
         return t.lowercase()
+    }
+
+    /** Temps restant affiché sur la barre verte (« 23:59:57 », « 1:45:10 », « 59:30 », ou « 1j … »), en heures ; null si illisible. */
+    private fun bonusBarHours(rgb: Mat): Double? {
+        val raw = ocrRefWhite(rgb, 380, 982, 820, 1028)
+        val t = raw.replace("\n", " ").replace(" ", "").replace('o', '0').replace('O', '0').replace('l', '1').replace('i', '1')
+        if (t.isEmpty()) return null
+        if (Regex("\\d\\s*[jd]").containsMatchIn(t)) return 24.0 // un jour ou plus
+        val m3 = Regex("(\\d{1,3})[:.;,](\\d{2})[:.;,](\\d{2})").find(t)
+        if (m3 != null) return m3.groupValues[1].toInt() + m3.groupValues[2].toInt() / 60.0
+        val m2 = Regex("(\\d{1,2})[:.;,](\\d{2})").find(t)
+        if (m2 != null) return 0.0 // « MM:SS » : moins d'une heure
+        val d = t.filter { it.isDigit() }
+        return when (d.length) {
+            6 -> d.substring(0, 2).toInt() + d.substring(2, 4).toInt() / 60.0
+            5 -> d.substring(0, 1).toInt() + d.substring(1, 3).toInt() / 60.0
+            else -> null
+        }
     }
 
     private fun bonusDone(msg: String) {
@@ -3262,7 +3282,18 @@ class BotService : Service() {
             }
             val bar = colorRect(rgb, 260, 985, 930, 1025, Scalar(40.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.4
             val use24 = colorRect(rgb, 775, 1370, 1000, 1455, Scalar(80.0, 100.0, 150.0), Scalar(105.0, 255.0, 255.0)) >= 0.3
-            if (bar) { bonusDone("boost actif (temps et barre verte), flèche retour"); return }
+            if (bar) {
+                if (bonusAsk > 0 || bonusBuys > 0) { bonusDone("achat fait, boost actif (barre verte), flèche retour"); return }
+                val hrs = bonusBarHours(rgb)
+                if (hrs == null) {
+                    if (bonusBarAt == 0L) bonusBarAt = now
+                    if (now - bonusBarAt < 3_000L) return // temps pas encore lisible : on relit
+                    bonusDone("temps de la barre verte illisible : on ne fait rien, flèche retour")
+                    return
+                }
+                if (hrs >= 2.0) { bonusDone("boost actif, encore ${"%.1f".format(hrs)} h (2 h ou plus) : on ne fait rien, flèche retour"); return }
+                if (dailyGrey == 0 && now - dailyActAt > 1_500L) log("daily : Bonus de collecte : il reste ${"%.1f".format(hrs)} h (moins de 2 h), on achète quand même")
+            }
             if (use24) {
                 if (bonusBuys > 0 && now - dailyActAt < 3_000L) return // achat fait : on attend l'activation
                 val row = ocrRefWhite(rgb, 255, 1340, 760, 1490)
