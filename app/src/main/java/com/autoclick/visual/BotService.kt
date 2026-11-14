@@ -1836,7 +1836,7 @@ class BotService : Service() {
                     dailyActAt = now
                     dailyIdleAt = now
                     dailyStepAt = now
-                    resetShop(now)
+                    resetBq(now)
                     clickRef(975.0, 125.0, "daily : Boutiques : point rouge sur le panier, ouverture")
                     return
                 }
@@ -1953,7 +1953,7 @@ class BotService : Service() {
             "VIP" -> detectVip(rgb, now)
             "BONUS" -> detectBonus(rgb, now)
             "PET" -> detectPet(rgb, now)
-            "SHOP" -> detectShop(rgb, now)
+            "SHOP" -> detectBq(rgb, now)
         }
     }
 
@@ -3182,38 +3182,38 @@ class BotService : Service() {
 
     // ---------- Boutiques coffre + weekly (dernier préambule : point rouge sur le panier en haut à droite) ----------
 
-    private var shopStartAt = 0L
-    private var shopWaitUntil = 0L
-    private var shopPageKey = -1
-    private var shopPageSince = 0L
-    private var shopChestTries = 0
-    private var shopSwipes = 0
-    private var shopBottom = false
-    private var shopSig: DoubleArray? = null
-    private var shopLeft = 0
-    private var shopRight = 0
-    private var shopVisits = 0
-    private var shopCurSig: DoubleArray? = null
-    private val shopIgnore = ArrayList<DoubleArray>()
-    private val shopStuck = HashSet<Int>()
-    private val shopBtnClicks = HashMap<Int, Int>()
+    private var bqStartAt = 0L
+    private var bqWaitUntil = 0L
+    private var bqPageKey = -1
+    private var bqPageSince = 0L
+    private var bqChestTries = 0
+    private var bqSwipes = 0
+    private var bqBottom = false
+    private var bqSig: DoubleArray? = null
+    private var bqLeft = 0
+    private var bqRight = 0
+    private var bqVisits = 0
+    private var bqCurSig: DoubleArray? = null
+    private val bqIgnore = ArrayList<DoubleArray>()
+    private val bqStuck = HashSet<Int>()
+    private val bqBtnClicks = HashMap<Int, Int>()
 
-    private fun resetShop(now: Long) {
-        shopStartAt = now
-        shopWaitUntil = now + 1800L
-        shopPageKey = -1
-        shopPageSince = now
-        shopChestTries = 0
-        shopSwipes = 0
-        shopBottom = false
-        shopSig = null
-        shopLeft = 0
-        shopRight = 0
-        shopVisits = 0
-        shopCurSig = null
-        shopIgnore.clear()
-        shopStuck.clear()
-        shopBtnClicks.clear()
+    private fun resetBq(now: Long) {
+        bqStartAt = now
+        bqWaitUntil = now + 1800L
+        bqPageKey = -1
+        bqPageSince = now
+        bqChestTries = 0
+        bqSwipes = 0
+        bqBottom = false
+        bqSig = null
+        bqLeft = 0
+        bqRight = 0
+        bqVisits = 0
+        bqCurSig = null
+        bqIgnore.clear()
+        bqStuck.clear()
+        bqBtnClicks.clear()
     }
 
     /** Pastille rouge (les deux plages de teinte) : part de pixels rouges dans un rectangle. */
@@ -3222,7 +3222,7 @@ class BotService : Service() {
             colorRect(rgb, x0, y0, x1, y1, Scalar(172.0, 150.0, 150.0), Scalar(179.0, 255.0, 255.0))
 
     /** Onglet sélectionné (fond blanc en haut de la barre d'onglets) : (x début, x fin) en référence 1080, ou null. */
-    private fun shopSelectedTab(rgb: Mat): Pair<Int, Int>? {
+    private fun bqSelectedTab(rgb: Mat): Pair<Int, Int>? {
         val sc = rgb.cols() / 1080.0
         val ay = (233 * sc).toInt()
         val by = (241 * sc).toInt()
@@ -3261,7 +3261,7 @@ class BotService : Service() {
     }
 
     /** Points rouges des onglets (en haut à droite de chaque onglet) : abscisses de référence, hors pastilles « ! » des bords. */
-    private fun shopTabDots(rgb: Mat): List<Int> {
+    private fun bqTabDots(rgb: Mat): List<Int> {
         val sc = rgb.cols() / 1080.0
         val ay = (238 * sc).toInt()
         val by = (258 * sc).toInt()
@@ -3300,7 +3300,7 @@ class BotService : Service() {
     }
 
     /** Signature (couleurs moyennes) de l'icône d'un onglet : sert à ne pas revenir sur un onglet qui n'a rien donné. */
-    private fun shopTabSig(rgb: Mat, cx: Int): DoubleArray? {
+    private fun bqTabSig(rgb: Mat, cx: Int): DoubleArray? {
         val sc = rgb.cols() / 1080.0
         val x0 = ((cx - 45) * sc).toInt()
         val x1 = ((cx + 45) * sc).toInt()
@@ -3313,14 +3313,14 @@ class BotService : Service() {
         return doubleArrayOf(a[0], a[1], a[2], b[0], b[1], b[2])
     }
 
-    private fun shopSameSig(a: DoubleArray, b: DoubleArray): Boolean {
+    private fun bqSameSig(a: DoubleArray, b: DoubleArray): Boolean {
         var d = 0.0
         for (i in a.indices) d += Math.abs(a[i] - b[i])
         return d < 30.0
     }
 
     /** Signature de la page (aperçu 16×32 en gris) : sert à voir si le glissement a fait bouger la page (sinon : bas atteint). */
-    private fun shopContentSig(rgb: Mat): DoubleArray {
+    private fun bqContentSig(rgb: Mat): DoubleArray {
         val sc = rgb.cols() / 1080.0
         val ax = (60 * sc).toInt()
         val ay = (380 * sc).toInt()
@@ -3336,14 +3336,14 @@ class BotService : Service() {
         return DoubleArray(bytes.size) { (bytes[it].toInt() and 0xFF).toDouble() }
     }
 
-    private fun shopSigDiff(a: DoubleArray, b: DoubleArray): Double {
+    private fun bqSigDiff(a: DoubleArray, b: DoubleArray): Double {
         var d = 0.0
         for (i in a.indices) d += Math.abs(a[i] - b[i])
         return d / a.size
     }
 
     /** Larges boutons verts (« Récupérer ») de la page : rectangles (x0, y0, x1, y1) en référence, de haut en bas. */
-    private fun shopGreens(rgb: Mat): List<IntArray> {
+    private fun bqGreens(rgb: Mat): List<IntArray> {
         val sc = rgb.cols() / 1080.0
         val ax = (60 * sc).toInt()
         val ay = (380 * sc).toInt()
@@ -3374,7 +3374,7 @@ class BotService : Service() {
     }
 
     /** Mini coffre à récupérer : « Récupérable » (en haut à droite) ou « Gratuit » (à gauche). Renvoie le point à toucher. */
-    private fun shopChest(rgb: Mat): Pair<Double, Double>? {
+    private fun bqChest(rgb: Mat): Pair<Double, Double>? {
         val a = ocrRefWhite(rgb, 840, 535, 1060, 595)
         if ("cup" in a || "rabl" in a) return 945.0 to 505.0
         val b = ocrRefWhite(rgb, 40, 725, 225, 785)
@@ -3382,7 +3382,7 @@ class BotService : Service() {
         return null
     }
 
-    private fun shopExit(msg: String, now: Long) {
+    private fun bqExit(msg: String, now: Long) {
         lastClick = now
         backArrow()
         dailyAttempts["shop"] = 2
@@ -3395,17 +3395,17 @@ class BotService : Service() {
      * « Récupéré(es) » : appui n'importe où) et boutons verts « Récupérer » (on glisse vers le bas jusqu'au dernier) > pastille « ! »
      * au bord de la barre d'onglets pour retrouver les points rouges oubliés > flèche bleue. Jamais de bouton orange (en €).
      */
-    private fun detectShop(rgb: Mat, now: Long) {
-        if (now < shopWaitUntil) return
-        if (now - shopStartAt > 180_000L) { shopExit("trop long (3 min), sortie", now); return }
+    private fun detectBq(rgb: Mat, now: Long) {
+        if (now < bqWaitUntil) return
+        if (now - bqStartAt > 180_000L) { bqExit("trop long (3 min), sortie", now); return }
         val rw = ocrRef(rgb, 200, 2150, 880, 2240)
         if ("appuie" in rw || "quitter" in rw) {
             dailyIdleAt = now
             tapRewards("daily : Boutiques : récompense : appui n'importe où")
-            shopWaitUntil = now + 700L
+            bqWaitUntil = now + 700L
             return
         }
-        val sel = shopSelectedTab(rgb)
+        val sel = bqSelectedTab(rgb)
         if (sel == null) {
             if (now - dailyIdleAt > 10_000L) {
                 log("daily : Boutiques abandonnées (10 s sans écran reconnu)")
@@ -3417,98 +3417,98 @@ class BotService : Service() {
             return
         }
         dailyIdleAt = now
-        val dots = shopTabDots(rgb)
+        val dots = bqTabDots(rgb)
         val key = sel.first / 40
-        if (key != shopPageKey) {
-            shopPageKey = key
-            shopPageSince = now
-            shopChestTries = 0
-            shopSwipes = 0
-            shopBottom = false
-            shopSig = null
-            shopBtnClicks.clear()
+        if (key != bqPageKey) {
+            bqPageKey = key
+            bqPageSince = now
+            bqChestTries = 0
+            bqSwipes = 0
+            bqBottom = false
+            bqSig = null
+            bqBtnClicks.clear()
         }
         var selDot = dots.any { it >= sel.first + 150 && it <= sel.second + 12 }
-        if (selDot && key in shopStuck) selDot = false
-        if (selDot && now - shopPageSince > 25_000L) {
-            shopStuck.add(key)
-            shopCurSig?.let { shopIgnore.add(it) }
+        if (selDot && key in bqStuck) selDot = false
+        if (selDot && now - bqPageSince > 25_000L) {
+            bqStuck.add(key)
+            bqCurSig?.let { bqIgnore.add(it) }
             log("daily : Boutiques : onglet resté avec son point rouge après 25 s, on passe")
             selDot = false
         }
         if (selDot) {
             // 1. mini coffre (en haut de page seulement)
-            if (shopSwipes == 0 && shopChestTries < 3) {
-                val c = shopChest(rgb)
+            if (bqSwipes == 0 && bqChestTries < 3) {
+                val c = bqChest(rgb)
                 if (c != null) {
-                    shopChestTries++
+                    bqChestTries++
                     clickRef(c.first, c.second, "daily : Boutiques : mini coffre touché")
-                    shopWaitUntil = now + 1700L
+                    bqWaitUntil = now + 1700L
                     return
                 }
             }
             // 2. boutons verts « Récupérer »
-            for (g in shopGreens(rgb)) {
+            for (g in bqGreens(rgb)) {
                 val bk = g[1] / 80
-                if ((shopBtnClicks[bk] ?: 0) >= 3) continue
+                if ((bqBtnClicks[bk] ?: 0) >= 3) continue
                 val t = ocrRefWhite(rgb, g[0], g[1], g[2], g[3])
-                shopBtnClicks[bk] = (shopBtnClicks[bk] ?: 0) + 1
+                bqBtnClicks[bk] = (bqBtnClicks[bk] ?: 0) + 1
                 if ("cup" in t || "rer" in t) {
                     clickRef(((g[0] + g[2]) / 2).toDouble(), ((g[1] + g[3]) / 2).toDouble(), "daily : Boutiques : bouton vert « Récupérer » touché")
-                    shopWaitUntil = now + 1300L
+                    bqWaitUntil = now + 1300L
                     return
                 } else {
-                    shopBtnClicks[bk] = 3
+                    bqBtnClicks[bk] = 3
                     log("daily : Boutiques : bouton vert sans « Récupérer » (texte «${t.trim().take(20)}»), ignoré")
                 }
             }
             // 3. glisser vers le bas jusqu'au bout de la page
-            if (!shopBottom && shopSwipes < 8) {
-                val sig = shopContentSig(rgb)
-                val prev = shopSig
-                if (prev != null && shopSwipes > 0 && shopSigDiff(prev, sig) < 2.5) {
-                    shopBottom = true
+            if (!bqBottom && bqSwipes < 8) {
+                val sig = bqContentSig(rgb)
+                val prev = bqSig
+                if (prev != null && bqSwipes > 0 && bqSigDiff(prev, sig) < 2.5) {
+                    bqBottom = true
                 } else {
-                    shopSig = sig
-                    shopSwipes++
+                    bqSig = sig
+                    bqSwipes++
                     lastClick = now
                     val sc = rgb.cols() / 1080.0
                     ClickAccessibilityService.instance?.swipe((1010 * sc).toFloat(), (1900 * sc).toFloat(), (1010 * sc).toFloat(), (900 * sc).toFloat(), 900)
-                    log("daily : Boutiques : glissement vers le bas ($shopSwipes)")
-                    shopWaitUntil = now + 1500L
+                    log("daily : Boutiques : glissement vers le bas ($bqSwipes)")
+                    bqWaitUntil = now + 1500L
                     return
                 }
             }
-            shopStuck.add(key)
-            shopCurSig?.let { shopIgnore.add(it) }
+            bqStuck.add(key)
+            bqCurSig?.let { bqIgnore.add(it) }
             log("daily : Boutiques : bas de page atteint, point rouge toujours là, on passe")
         }
         // Onglet suivant à point rouge (le plus à gauche)
         val cand = dots.filter { it < sel.first + 150 || it > sel.second + 12 }.sorted().firstOrNull { x ->
-            val sg = shopTabSig(rgb, x - 130)
-            sg == null || shopIgnore.none { shopSameSig(it, sg) }
+            val sg = bqTabSig(rgb, x - 130)
+            sg == null || bqIgnore.none { bqSameSig(it, sg) }
         }
-        if (cand != null && shopVisits < 14) {
-            shopVisits++
-            shopCurSig = shopTabSig(rgb, cand - 130)
-            clickRef((cand - 130).toDouble(), 300.0, "daily : Boutiques : onglet à point rouge ($shopVisits)")
-            shopWaitUntil = now + 1300L
+        if (cand != null && bqVisits < 14) {
+            bqVisits++
+            bqCurSig = bqTabSig(rgb, cand - 130)
+            clickRef((cand - 130).toDouble(), 300.0, "daily : Boutiques : onglet à point rouge ($bqVisits)")
+            bqWaitUntil = now + 1300L
             return
         }
         // Pastilles « ! » : onglets cachés avec un point rouge
-        if (redRect(rgb, 985, 250, 1055, 300) >= 0.2 && shopRight < 3) {
-            shopRight++
-            clickRef(1018.0, 275.0, "daily : Boutiques : pastille « ! » à droite ($shopRight)")
-            shopWaitUntil = now + 1300L
+        if (redRect(rgb, 985, 250, 1055, 300) >= 0.2 && bqRight < 3) {
+            bqRight++
+            clickRef(1018.0, 275.0, "daily : Boutiques : pastille « ! » à droite ($bqRight)")
+            bqWaitUntil = now + 1300L
             return
         }
-        if (redRect(rgb, 25, 250, 100, 300) >= 0.2 && shopLeft < 3) {
-            shopLeft++
-            clickRef(60.0, 275.0, "daily : Boutiques : pastille « ! » à gauche ($shopLeft)")
-            shopWaitUntil = now + 1300L
+        if (redRect(rgb, 25, 250, 100, 300) >= 0.2 && bqLeft < 3) {
+            bqLeft++
+            clickRef(60.0, 275.0, "daily : Boutiques : pastille « ! » à gauche ($bqLeft)")
+            bqWaitUntil = now + 1300L
             return
         }
-        shopExit("plus de point rouge, sortie (flèche bleue)", now)
+        bqExit("plus de point rouge, sortie (flèche bleue)", now)
     }
 
     // ---------- Pet Skill (préambule : patte d'ours avec point rouge) ----------
