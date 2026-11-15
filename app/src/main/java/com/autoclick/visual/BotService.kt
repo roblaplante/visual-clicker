@@ -4611,11 +4611,14 @@ class BotService : Service() {
         if (squad < 0) { epStop("fenêtre Taux sans équipe en cours"); return }
         val tgt = epTarget(isl, squad)
         val ry = intArrayOf(1047, 1267, 1487)
+        // chiffres BLANCS cerclés de sombre sur case grise : on lit le blanc (seuils hauts), zone resserrée pour exclure le liseré de la case
+        val raw = Array(3) { ocrRefWhite(rgb, 850, ry[it] - 22, 940, ry[it] + 22) }
         val v = IntArray(3) {
-            val s = ocrRef(rgb, 840, ry[it] - 30, 948, ry[it] + 30, true).replace('o', '0').filter { c -> c.isDigit() }
+            val s = raw[it].replace('o', '0').replace('O', '0').replace('l', '1').replace('i', '1').filter { c -> c.isDigit() }
             s.toIntOrNull()?.takeIf { n -> n in 0..100 } ?: -1
         }
         if (v.any { it < 0 }) {
+            if (epTauxFails == 0) log("épreuves : Taux : lecture brute ${raw.joinToString(" | ") { it.trim().replace("\n", " ") }}")
             if (++epTauxFails > 12) epStop("pourcentages illisibles dans la fenêtre Taux")
             epWaitUntil = now + 300L
             return
