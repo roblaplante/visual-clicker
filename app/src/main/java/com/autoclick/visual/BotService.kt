@@ -1622,6 +1622,7 @@ class BotService : Service() {
     private var dailyIdleAt = 0L // dernier instant où un écran connu a été reconnu : au-delà de 10 s sans rien, on abandonne
     private var dailyFinished = false
     private val dailyAttempts = HashMap<String, Int>()
+    private val dailyLaunchAt = HashMap<String, Long>()
 
     private fun resetDaily() {
         dailyState = "OPEN"; dailyStep = 0; dailyStepAt = 0L; dailyTries = 0; dailyFinished = false
@@ -1905,9 +1906,12 @@ class BotService : Service() {
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
                 for ((cy, key) in cands) {
+                    // « Récomp. En Ligne » revient toutes les quelques minutes : on la reprend si la dernière visite date de plus de 2 min
+                    if (key == "enligne" && (dailyAttempts[key] ?: 0) >= 2 && now - (dailyLaunchAt[key] ?: 0L) > 120_000L) dailyAttempts[key] = 0
                     if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 1 else 2)) continue // un seul recrutement gratuit par passage
                     val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence
                     dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
+                    dailyLaunchAt[key] = now
                     dailyState = key.uppercase()
                     if (key == "fontaine") resetFontaine()
                     dailyStep = 0
@@ -2124,12 +2128,10 @@ class BotService : Service() {
     private var ordresFest = false // Festivités autorisée (les deux autres sont « Actif »)
     private var ordresFestAt = 0L
 
-    /** Le bandeau du livre n°i affiche-t-il « Actif » (et pas « Se recharge ») ? */
+    /** Le livre n°i porte-t-il un bandeau (« Actif » ou « Se recharge » : il vient d'être utilisé ou l'a été) ? */
     private fun ordresActive(rgb: Mat, i: Int): Boolean {
-        val bannerY = if (i == 0) 1625 else 735 // haut de la zone du bandeau, au-dessus de celle du test de luminosité
-        val bx = if (i == 0) 190 else 600
-        val t = ocrRef(rgb, bx, bannerY, bx + 290, bannerY + 130, true)
-        return "acti" in t && "recharg" !in t
+        val b = ordresBooks[i]
+        return lightFrac(rgb, b[2], b[3], b[4], b[5]) >= 0.3
     }
 
     /**
@@ -2191,7 +2193,7 @@ class BotService : Service() {
                         ordresChecked = true
                         ordresFest = true
                         dailyStep = 2
-                        log("daily : Ordres : Productivité et Travail Urgent déjà actifs, on passe à Festivités")
+                        log("daily : Ordres : Productivité et Travail Urgent déjà utilisés, on passe à Festivités")
                         return
                     }
                     dailyStep = ordresBooks.size
@@ -2208,9 +2210,9 @@ class BotService : Service() {
                 if (now - ordresFestAt < 900L) return
                 if (ordresActive(rgb, 0) && ordresActive(rgb, 1)) {
                     ordresFest = true
-                    log("daily : Ordres : les deux sont actifs, Festivités")
+                    log("daily : Ordres : les deux sont utilisés (Actif / Se recharge), Festivités")
                 } else {
-                    log("daily : Ordres : les deux ne sont pas « Actif », pas de Festivités")
+                    log("daily : Ordres : les deux ne sont pas utilisés (Productivité ${ordresActive(rgb, 0)}, Travail Urgent ${ordresActive(rgb, 1)}), pas de Festivités")
                     dailyStep = ordresBooks.size
                     return
                 }
