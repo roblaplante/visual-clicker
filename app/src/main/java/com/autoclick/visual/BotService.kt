@@ -4190,6 +4190,18 @@ class BotService : Service() {
         return s
     }
 
+    /** Luminosité moyenne d'une zone : carte de héros (claire) ou emplacement vide (brun sombre). */
+    private fun epBright(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Double {
+        val r = epRef(rgb, x0, y0, x1, y1)
+        val hsv = Mat()
+        Imgproc.cvtColor(r, hsv, Imgproc.COLOR_RGB2HSV)
+        val v = Core.mean(hsv).`val`[2]
+        r.release(); hsv.release()
+        return v
+    }
+
+    private var epLastScore = 0.0
+
     private fun epClick(x: Double, y: Double) {
         ClickAccessibilityService.instance?.click((x * w / 1080.0).toFloat(), (y * w / 1080.0).toFloat())
     }
@@ -4203,6 +4215,7 @@ class BotService : Service() {
         reg.release()
         val mm = matchBest(g, t)
         g.release()
+        epLastScore = mm?.maxVal ?: 0.0
         if (mm == null || mm.maxVal < 0.80) return null
         return Pair(100 + mm.maxLoc.x + t.cols() / 2.0, 1130 + mm.maxLoc.y + t.rows() / 2.0 - 7.0)
     }
@@ -4287,8 +4300,7 @@ class BotService : Service() {
         }
 
         // 2) fenêtre « Récompenses de Pillage »
-        val pill = ocrRef(rgb, 150, 980, 930, 1120)
-        if ("pillage" in pill && colorRect(rgb, 330, 1735, 750, 1815, epGreenLo, epGreenHi) >= 0.4) {
+        if (colorRect(rgb, 330, 1735, 750, 1815, epGreenLo, epGreenHi) >= 0.5) {
             epIdleAt = now
             clickRef(540.0, 1775.0, "épreuves : Récompenses de Pillage : Récupérer")
             epWaitUntil = now + 1500L
@@ -4302,8 +4314,8 @@ class BotService : Service() {
             epHandleHeroes(rgb, now)
             return
         }
-        val tx = ocrRef(rgb, 400, 690, 700, 775)
-        if ("taux" in tx && colorRect(rgb, 330, 1680, 750, 1760, epCyanLo, epCyanHi) >= 0.35) {
+        val minusOn = intArrayOf(1045, 1265, 1485).count { colorRect(rgb, 270, it - 30, 340, it + 30, epCyanLo, epCyanHi) >= 0.5 }
+        if (minusOn >= 2 && colorRect(rgb, 330, 1680, 750, 1760, epCyanLo, epCyanHi) >= 0.5) {
             epIdleAt = now
             epHandleTaux(rgb, now)
             return
@@ -4524,7 +4536,7 @@ class BotService : Service() {
             return
         }
         val cx = doubleArrayOf(257.0, 540.0, 823.0)
-        val f = (0 until 3).count { epSat(rgb, cx[it].toInt() - 60, 450, cx[it].toInt() + 60, 600) > 60.0 }
+        val f = (0 until 3).count { epBright(rgb, cx[it].toInt() - 60, 450, cx[it].toInt() + 60, 600) > 140.0 }
         if (f < 3) {
             if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
             clickRef(cx[f], 535.0, "épreuves : équipe ${epCurSquad + 1} : « + » du héros ${f + 1}")
@@ -4564,15 +4576,15 @@ class BotService : Service() {
                 epWaitUntil = now + 700L
                 return
             }
-            if (epSelSwipes < 2) {
+            if (epSelSwipes < 1) {
                 epSelSwipes++
                 lastClick = now
                 ClickAccessibilityService.instance?.swipe((540 * w / 1080.0).toFloat(), (1560 * w / 1080.0).toFloat(), (540 * w / 1080.0).toFloat(), (1250 * w / 1080.0).toFloat(), 600)
-                log("épreuves : héros $key introuvable dans la liste visible : défilement ${epSelSwipes}")
+                log("épreuves : héros $key introuvable (meilleure ressemblance ${(epLastScore * 100).toInt()} %, il en faut 80) : défilement de la liste")
                 epWaitUntil = now + 1_000L
                 return
             }
-            log("épreuves : héros $key introuvable : on prend le héros sélectionné par défaut (le plus fort du bon type)")
+            log("épreuves : héros $key absent de ce compte ? (ressemblance ${(epLastScore * 100).toInt()} %) : on prend le héros sélectionné par défaut, le plus fort")
             epSelClicked = true
         }
         if (++epAssignTries > 4) { epStop("« Assigner » sans effet pour le héros ${k + 1} de l'équipe ${team + 1}"); return }
