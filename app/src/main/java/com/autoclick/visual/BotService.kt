@@ -4625,7 +4625,9 @@ class BotService : Service() {
         val raw = Array(3) { ocrRefWhite(rgb, 850, ry[it] - 22, 940, ry[it] + 22) }
         val v = IntArray(3) {
             val s = raw[it].replace('o', '0').replace('O', '0').replace('l', '1').replace('i', '1').filter { c -> c.isDigit() }
-            s.toIntOrNull()?.takeIf { n -> n in 0..100 } ?: -1
+            // un « 0 » seul n'est pas lu par l'OCR : le bouton « − » est alors grisé (plus rien à retirer) => 0 %
+            s.toIntOrNull()?.takeIf { n -> n in 0..100 }
+                ?: if (colorRect(rgb, 270, ry[it] - 30, 340, ry[it] + 30, epCyanLo, epCyanHi) < 0.1) 0 else -1
         }
         if (v.any { it < 0 }) {
             if (epTauxFails == 0) log("épreuves : Taux : lecture brute ${raw.joinToString(" | ") { it.trim().replace("\n", " ") }}")
