@@ -4569,6 +4569,13 @@ class BotService : Service() {
         if (k != epSelK) { epSelK = k; epSelClicked = false; epSelSwipes = 0; epAssignTries = 0 }
         val key = epTeamHeroes[team][k]
         if (!epSelClicked) {
+            val exact = getSharedPreferences("cfg", MODE_PRIVATE).getBoolean("epHeroExact_$key", true)
+            if (!exact) {
+                log("épreuves : équipe ${team + 1} : héros ${k + 1} : pas exact (menu), on prend le premier de la liste")
+                epSelClicked = true
+            }
+        }
+        if (!epSelClicked) {
             val p = epFindHero(rgb, key)
             if (p != null) {
                 clickRef(p.first, p.second, "épreuves : équipe ${team + 1} : héros ${k + 1} ($key) touché")
@@ -4584,8 +4591,8 @@ class BotService : Service() {
                 epWaitUntil = now + 1_000L
                 return
             }
-            log("épreuves : héros $key absent de ce compte ? (ressemblance ${(epLastScore * 100).toInt()} %) : on prend le héros sélectionné par défaut, le plus fort")
-            epSelClicked = true
+            epStop("héros exact « $key » introuvable (ressemblance ${(epLastScore * 100).toInt()} %, il en faut 80) : décoche-le dans le menu pour prendre le premier de la liste")
+            return
         }
         if (++epAssignTries > 4) { epStop("« Assigner » sans effet pour le héros ${k + 1} de l'équipe ${team + 1}"); return }
         clickRef(770.0, 1755.0, "épreuves : équipe ${team + 1} : Assigner (héros ${k + 1})")

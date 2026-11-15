@@ -16,6 +16,7 @@ import android.text.TextWatcher
 import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.ImageView
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -475,12 +476,24 @@ class MainActivity : AppCompatActivity() {
         Triple("Nexus du Savoir (vendredi, samedi)", "epr_nexus_", intArrayOf(55, 5, 40)),
         Triple("Forteresse en Fusion (vendredi, samedi)", "epr_fort_", intArrayOf(50, 10, 40))
     )
+    private val epHeroKeys = arrayOf(
+        arrayOf("spartiate", "bouffonne", "casquette"),
+        arrayOf("archere", "blanc", "rousse"),
+        arrayOf("pirate", "blonde", "guerriere")
+    )
+    private val epHeroClass = arrayOf(
+        arrayOf("Infanterie", "Cavalerie", "Archer"),
+        arrayOf("Archer", "Infanterie", "Cavalerie"),
+        arrayOf("Archer", "Cavalerie", "Infanterie")
+    )
+    private val epHeroChecks = HashMap<String, CheckBox>()
     private val epEdits = ArrayList<EditText>()
     private lateinit var epResetEdit: EditText
 
     private fun showEpreuves() {
         screen = 9
         epEdits.clear()
+        epHeroChecks.clear()
         val root = newRoot()
         root.addView(backToMenuButton())
         root.addView(TextView(this).apply { text = "Épreuves Mystiques"; textSize = 22f })
@@ -506,6 +519,29 @@ class MainActivity : AppCompatActivity() {
             }
             root.addView(row)
         }
+        root.addView(label("Héros des 3 équipes (Flèche Éclatante et Colisée). Case cochée = exactement ce héros (le bot s'arrête s'il ne le trouve pas). Case décochée = le premier héros de la liste (le plus fort du bon type) :"))
+        for (t in 0 until 3) {
+            root.addView(label("Équipe ${t + 1}"))
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (h in 0 until 3) {
+                val key = epHeroKeys[t][h]
+                val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = android.view.Gravity.CENTER_HORIZONTAL }
+                val img = ImageView(this)
+                try {
+                    assets.open("epreuves/hero_$key.png").use { img.setImageBitmap(BitmapFactory.decodeStream(it)) }
+                } catch (_: Exception) {
+                }
+                col.addView(img, LinearLayout.LayoutParams(pad * 6, pad * 4))
+                val cb = CheckBox(this).apply {
+                    text = epHeroClass[t][h]
+                    isChecked = sp.getBoolean("epHeroExact_$key", true)
+                }
+                epHeroChecks[key] = cb
+                col.addView(cb)
+                row.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            root.addView(row)
+        }
         root.addView(label("Ouvrez le jeu sur la ville, puis démarrez."))
         root.addView(button("Démarrer") { start("epreuves") })
     }
@@ -513,6 +549,7 @@ class MainActivity : AppCompatActivity() {
     private fun saveEpreuves() {
         val e = sp.edit()
         e.putInt("epResetHour", (epResetEdit.text.toString().toIntOrNull() ?: 1).coerceIn(0, 23))
+        for ((key, cb) in epHeroChecks) e.putBoolean("epHeroExact_$key", cb.isChecked)
         for ((g, grp) in epGroups.withIndex()) {
             val v = IntArray(3) { (epEdits[g * 3 + it].text.toString().toIntOrNull() ?: -1) }
             if (v.all { it in 0..100 } && v.sum() == 100) {
