@@ -4247,6 +4247,7 @@ class BotService : Service() {
 
     private val epCyanLo = Scalar(85.0, 100.0, 170.0)
     private val epCyanHi = Scalar(105.0, 255.0, 255.0)
+    private var epPillageLogAt = 0L
     private val epGreenLo = Scalar(40.0, 100.0, 100.0)
     private val epGreenHi = Scalar(85.0, 255.0, 255.0)
     private val epBadgeLo = Scalar(0.0, 170.0, 200.0)
@@ -4302,11 +4303,20 @@ class BotService : Service() {
         }
 
         // 2) fenêtre « Récompenses de Pillage »
+        // Le vert seul ne suffit pas : l'herbe de la ville (au-dessus de la Tour à Canon) en fait ~55 % et déclenchait un clic sur la tour.
+        // On confirme donc par le texte « Récupérer » du bouton.
         if (colorRect(rgb, 330, 1735, 750, 1815, epGreenLo, epGreenHi) >= 0.5) {
-            epIdleAt = now
-            clickRef(540.0, 1775.0, "épreuves : Récompenses de Pillage : Récupérer")
-            epWaitUntil = now + 1500L
-            return
+            val btn = ocrRefWhite(rgb, 330, 1735, 750, 1815)
+            if ("cup" in btn || "récu" in btn || "recu" in btn) {
+                epIdleAt = now
+                clickRef(540.0, 1775.0, "épreuves : Récompenses de Pillage : Récupérer")
+                epWaitUntil = now + 1500L
+                return
+            }
+            if (now - epPillageLogAt > 20_000L) {
+                epPillageLogAt = now
+                log("épreuves : zone verte sans « Récupérer » (lu : « ${btn.trim().replace("\n", " ")} ») : ignorée")
+            }
         }
 
         // 3) fenêtres (testées avant le titre : leur fond flouté montre encore le titre de l'écran dessous) : Sélectionner des Héros, Taux
