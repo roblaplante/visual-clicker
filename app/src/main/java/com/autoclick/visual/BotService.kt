@@ -4249,6 +4249,8 @@ class BotService : Service() {
     private val epCyanHi = Scalar(105.0, 255.0, 255.0)
     private val epGreenLo = Scalar(40.0, 100.0, 100.0)
     private val epGreenHi = Scalar(85.0, 255.0, 255.0)
+    private val epBadgeLo = Scalar(0.0, 170.0, 200.0)
+    private val epBadgeHi = Scalar(16.0, 255.0, 255.0)
     private val epOrangeLo = Scalar(5.0, 170.0, 200.0)
     private val epOrangeHi = Scalar(20.0, 255.0, 255.0)
 
@@ -4536,7 +4538,9 @@ class BotService : Service() {
             return
         }
         val cx = doubleArrayOf(257.0, 540.0, 823.0)
-        val f = (0 until 3).count { epBright(rgb, cx[it].toInt() - 60, 450, cx[it].toInt() + 60, 600) > 140.0 }
+        // carte pleine = pastille orange « − » (retirer) en haut à droite de la carte ; emplacement vide : aucune pastille
+        val bx = doubleArrayOf(359.0, 642.0, 925.0)
+        val f = (0 until 3).count { colorRect(rgb, bx[it].toInt() - 30, 325, bx[it].toInt() + 30, 380, epBadgeLo, epBadgeHi) >= 0.3 }
         if (f < 3) {
             if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
             clickRef(cx[f], 535.0, "épreuves : équipe ${epCurSquad + 1} : « + » du héros ${f + 1}")
