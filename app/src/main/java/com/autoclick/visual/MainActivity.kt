@@ -489,7 +489,7 @@ class MainActivity : AppCompatActivity() {
                 "L'appli ouvre le menu de gauche > Quot. > tâche « Épreuve Mystique », puis, île par île (la plus haute " +
                     "d'abord) : « ! » (formation à créer), Piller, Défi, équipes, Déployer, combats (Passer / Réessayer) " +
                     "jusqu'aux 5 tentatives du jour. Flèche Éclatante (dimanche) et Colisée (lundi, mardi) : 3 équipes " +
-                    "de héros fixes. Les 4 autres épreuves : taux de troupes seulement (suite à construire)."
+                    "de héros fixes. Les 4 autres épreuves : pas de héros, seulement le taux de troupes puis Déployer."
             )
         )
         root.addView(label("Heure de remise à zéro du jeu (heure de Paris). Le jour de la semaine, qui sert de contrôle, change à cette heure :"))

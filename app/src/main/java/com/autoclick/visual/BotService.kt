@@ -4500,27 +4500,42 @@ class BotService : Service() {
         }
     }
 
-    /** Écran de formation d'une équipe : cartes de héros en haut, barre « Taux de Troupes » et boutons en bas. */
+    /**
+     * Écran de formation. Flèche Éclatante / Colisée : cartes de héros en haut (3 héros à placer, puis Taux, puis retour à la
+     * config). Autres épreuves : pas de héros (« Impossible de déployer des Héros… »), seulement Taux puis Déployer.
+     */
     private fun epHandleFormation(rgb: Mat, now: Long, isl: EpIsland) {
+        if (!isl.teams) {
+            epCurSquad = 0
+            if (!epRatioDone[0]) {
+                epTauxFails = 0; epTauxStuck = 0; epLastVals = ""
+                clickRef(495.0, 2200.0, "épreuves : ${isl.label} : bouton « Taux »")
+                epWaitUntil = now + 1_500L
+                return
+            }
+            if (colorRect(rgb, 610, 2190, 1040, 2290, epCyanLo, epCyanHi) >= 0.35) {
+                epDeployAt = now
+                clickRef(822.0, 2240.0, "épreuves : ${isl.label} : taux réglés, Déployer")
+                epWaitUntil = now + 2_500L
+            } else if (now - epDeployAt > 8_000L) {
+                epDeployAt = now
+                log("épreuves : ${isl.label} : « Déployer » n'est pas actif : attente")
+            }
+            return
+        }
         val cx = doubleArrayOf(257.0, 540.0, 823.0)
         val f = (0 until 3).count { epSat(rgb, cx[it].toInt() - 60, 450, cx[it].toInt() + 60, 600) > 60.0 }
         if (f < 3) {
-            if (!isl.teams) { epStop("formation incomplète pour ${isl.label} (épreuve à taux seul : à construire)"); return }
             if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
             clickRef(cx[f], 535.0, "épreuves : équipe ${epCurSquad + 1} : « + » du héros ${f + 1}")
             epWaitUntil = now + 1_600L
             return
         }
-        if (!isl.teams && epCurSquad < 0) epCurSquad = 0
         if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
         if (!epRatioDone[epCurSquad]) {
             epTauxFails = 0; epTauxStuck = 0; epLastVals = ""
             clickRef(495.0, 2200.0, "épreuves : équipe ${epCurSquad + 1} : héros en place, bouton « Taux »")
             epWaitUntil = now + 1_500L
-            return
-        }
-        if (!isl.teams) {
-            epStop("taux réglés (${epTarget(isl, 0).joinToString("/")}) pour ${isl.label} ; la suite de cette épreuve est à construire")
             return
         }
         clickRef(822.0, 2240.0, "épreuves : équipe ${epCurSquad + 1} terminée : Modifier la Formation (retour à la config)")
