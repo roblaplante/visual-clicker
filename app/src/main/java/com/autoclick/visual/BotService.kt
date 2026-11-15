@@ -1906,8 +1906,8 @@ class BotService : Service() {
                 cands.sortBy { it.first } // du haut vers le bas
                 var launched = false
                 for ((cy, key) in cands) {
-                    // « Récomp. En Ligne » revient toutes les quelques minutes : on la reprend si la dernière visite date de plus de 2 min
-                    if (key == "enligne" && (dailyAttempts[key] ?: 0) >= 2 && now - (dailyLaunchAt[key] ?: 0L) > 120_000L) dailyAttempts[key] = 0
+                    // « Récomp. En Ligne » revient toutes les quelques minutes : on la reprend si la dernière visite date de plus de 30 s
+                    if (key == "enligne" && (dailyAttempts[key] ?: 0) >= 2 && now - (dailyLaunchAt[key] ?: 0L) > 30_000L) dailyAttempts[key] = 0
                     if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 1 else 2)) continue // un seul recrutement gratuit par passage
                     val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence
                     dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
