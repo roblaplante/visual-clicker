@@ -4057,15 +4057,71 @@ class BotService : Service() {
 
     // ---------- Épreuves Mystiques (menu « Épreuves Mystiques », à la demande) ----------
 
+    private class EpIsland(
+        val id: String, val label: String, val keys: List<String>, val days: List<Int>,
+        val lab: IntArray, val cx: Double, val cy: Double, val teams: Boolean, val def: IntArray
+    )
+
+    // Îles de la carte « Épreuve Mystique » : positions fixes (coordonnées de référence 1080 px).
+    private val epIslands = listOf(
+        EpIsland("fleche", "Flèche Éclatante", listOf("flèche", "fleche", "clatante", "radieuse"), listOf(java.util.Calendar.SUNDAY),
+            intArrayOf(330, 1180, 710, 1330), 515.0, 1111.0, true, intArrayOf(0, 0, 0)),
+        EpIsland("colisee", "Colisée", listOf("colis"), listOf(java.util.Calendar.MONDAY, java.util.Calendar.TUESDAY),
+            intArrayOf(320, 1740, 680, 1880), 491.0, 1556.0, true, intArrayOf(0, 0, 0)),
+        EpIsland("grotte", "Grotte de Cristal", listOf("grotte", "cristal"), listOf(java.util.Calendar.WEDNESDAY, java.util.Calendar.THURSDAY),
+            intArrayOf(30, 875, 430, 1035), 200.0, 760.0, false, intArrayOf(50, 15, 35)),
+        EpIsland("foret", "Forêt de la Vie", listOf("forêt", "foret", "vie"), listOf(java.util.Calendar.WEDNESDAY, java.util.Calendar.THURSDAY),
+            intArrayOf(10, 1380, 360, 1540), 129.0, 1182.0, false, intArrayOf(50, 10, 40)),
+        EpIsland("nexus", "Nexus du Savoir", listOf("nexus", "connaiss", "savoir"), listOf(java.util.Calendar.FRIDAY, java.util.Calendar.SATURDAY),
+            intArrayOf(640, 915, 1045, 1060), 830.0, 807.0, false, intArrayOf(55, 5, 40)),
+        EpIsland("fort", "Forteresse en Fusion", listOf("fusion", "forteresse", "fort en"), listOf(java.util.Calendar.FRIDAY, java.util.Calendar.SATURDAY),
+            intArrayOf(650, 1360, 1050, 1535), 889.0, 1217.0, false, intArrayOf(50, 10, 40))
+    )
+
+    // Les 3 équipes (Flèche Éclatante et Colisée) : héros dans l'ordre d'assignation, et taux par défaut.
+    private val epTeamHeroes = arrayOf(
+        arrayOf("spartiate", "bouffonne", "casquette"),
+        arrayOf("archere", "blanc", "rousse"),
+        arrayOf("pirate", "blonde", "guerriere")
+    )
+    private val epTeamDef = arrayOf(intArrayOf(60, 40, 0), intArrayOf(45, 15, 40), intArrayOf(50, 20, 30))
+
     private var epFinished = false
     private var epClickedAt = 0L
     private var epIdleAt = 0L
     private var epBackTries = 0
     private var epListTries = 0
     private var epTabAt = 0L
+    private var epWaitUntil = 0L
+    private var epCurSquad = -1
+    private val epRatioDone = BooleanArray(3)
+    private val epDone = HashSet<String>()
+    private var epCurIsland: EpIsland? = null
+    private var epMapScanAt = 0L
+    private var epMapOpen: List<EpIsland> = emptyList()
+    private var epSelK = -1
+    private var epSelClicked = false
+    private var epSelSwipes = 0
+    private var epAssignTries = 0
+    private var epTauxFails = 0
+    private var epTauxStuck = 0
+    private var epLastVals = ""
+    private var epFights = 0
+    private var epPassAt = 0L
+    private var epVictoryAt = 0L
+    private var epCheckToggled = false
+    private var epDeployAt = 0L
+    private var epConfigClickAt = 0L
+    private var epUnexpectedLogged = false
+    private val epTpl = HashMap<String, Mat>()
+    private var epBangTpl: Mat? = null
 
     private fun resetEpreuves() {
         epFinished = false; epClickedAt = 0L; epIdleAt = SystemClock.uptimeMillis(); epBackTries = 0; epListTries = 0; epTabAt = 0L
+        epWaitUntil = 0L; epCurSquad = -1; epRatioDone.fill(false); epDone.clear(); epCurIsland = null; epMapScanAt = 0L
+        epMapOpen = emptyList(); epSelK = -1; epSelClicked = false; epSelSwipes = 0; epAssignTries = 0
+        epTauxFails = 0; epTauxStuck = 0; epLastVals = ""; epFights = 0; epPassAt = 0L; epVictoryAt = 0L; epCheckToggled = false
+        epDeployAt = 0L; epConfigClickAt = 0L; epUnexpectedLogged = false
     }
 
     private fun loadEpreuves() {
@@ -4079,18 +4135,212 @@ class BotService : Service() {
         main.post { pauseBot("Épreuves Mystiques : $msg") }
     }
 
+    /** Jour de la semaine DU JEU : il change à l'heure de remise à zéro (1 h par défaut, réglable dans le menu). */
+    private fun epToday(): Int {
+        val reset = getSharedPreferences("cfg", MODE_PRIVATE).getInt("epResetHour", 1).coerceIn(0, 23)
+        val c = java.util.Calendar.getInstance()
+        c.add(java.util.Calendar.HOUR_OF_DAY, -reset)
+        return c.get(java.util.Calendar.DAY_OF_WEEK)
+    }
+
+    /** Taux (Infanterie, Cavalerie, Archer) à régler pour l'équipe i (Flèche / Colisée) ou pour une épreuve à taux seul. */
+    private fun epTarget(isl: EpIsland, squad: Int): IntArray {
+        val p = getSharedPreferences("cfg", MODE_PRIVATE)
+        val d = if (isl.teams) epTeamDef[squad.coerceIn(0, 2)] else isl.def
+        val k = if (isl.teams) "epr_team${squad.coerceIn(0, 2)}_" else "epr_${isl.id}_"
+        return IntArray(3) { p.getInt(k + it, d[it]).coerceIn(0, 100) }
+    }
+
+    private fun epLoadGray(path: String): Mat? {
+        return try {
+            val bmp = assets.open(path).use { BitmapFactory.decodeStream(it) } ?: return null
+            val rgba = Mat()
+            Utils.bitmapToMat(bmp, rgba)
+            bmp.recycle()
+            val g = Mat()
+            Imgproc.cvtColor(rgba, g, Imgproc.COLOR_RGBA2GRAY)
+            rgba.release()
+            g
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Zone de l'écran ramenée à l'échelle de référence (1080 px de large). */
+    private fun epRef(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Mat {
+        val sc = rgb.cols() / 1080.0
+        val ax = (x0 * sc).toInt()
+        val ay = (y0 * sc).toInt()
+        val bx = minOf((x1 * sc).toInt(), rgb.cols())
+        val by = minOf((y1 * sc).toInt(), rgb.rows())
+        val sub = Mat(rgb, Rect(ax, ay, bx - ax, by - ay))
+        if (abs(sc - 1.0) < 0.01) return sub.clone()
+        val out = Mat()
+        Imgproc.resize(sub, out, Size(), 1.0 / sc, 1.0 / sc, Imgproc.INTER_AREA)
+        return out
+    }
+
+    /** Saturation moyenne d'une zone : carte de héros colorée (élevée) ou emplacement vide « + » gris (faible). */
+    private fun epSat(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Double {
+        val r = epRef(rgb, x0, y0, x1, y1)
+        val hsv = Mat()
+        Imgproc.cvtColor(r, hsv, Imgproc.COLOR_RGB2HSV)
+        val s = Core.mean(hsv).`val`[1]
+        r.release(); hsv.release()
+        return s
+    }
+
+    private fun epClick(x: Double, y: Double) {
+        ClickAccessibilityService.instance?.click((x * w / 1080.0).toFloat(), (y * w / 1080.0).toFloat())
+    }
+
+    /** Portrait d'un héros dans la liste « Sélectionner des Héros » (comparaison d'image) : centre en référence, ou null. */
+    private fun epFindHero(rgb: Mat, key: String): Pair<Double, Double>? {
+        val t = epTpl[key] ?: epLoadGray("epreuves/hero_$key.png")?.also { epTpl[key] = it } ?: return null
+        val reg = epRef(rgb, 100, 1130, 980, 1625)
+        val g = Mat()
+        Imgproc.cvtColor(reg, g, Imgproc.COLOR_RGB2GRAY)
+        reg.release()
+        val mm = matchBest(g, t)
+        g.release()
+        if (mm == null || mm.maxVal < 0.80) return null
+        return Pair(100 + mm.maxLoc.x + t.cols() / 2.0, 1130 + mm.maxLoc.y + t.rows() / 2.0 - 7.0)
+    }
+
+    /** Points d'exclamation jaunes (formation à créer) sur la carte : centres en référence, du plus haut au plus bas. */
+    private fun epBangs(rgb: Mat): List<Pair<Double, Double>> {
+        val tpl = epBangTpl ?: epLoadGray("epreuves/bang_mask.png")?.also { epBangTpl = it } ?: return emptyList()
+        val reg = epRef(rgb, 0, 280, 1080, 2000)
+        val hsv = Mat()
+        Imgproc.cvtColor(reg, hsv, Imgproc.COLOR_RGB2HSV)
+        reg.release()
+        val m = Mat()
+        Core.inRange(hsv, Scalar(17.0, 150.0, 190.0), Scalar(34.0, 255.0, 255.0), m)
+        hsv.release()
+        if (m.cols() < tpl.cols() || m.rows() < tpl.rows()) { m.release(); return emptyList() }
+        val res = Mat()
+        Imgproc.matchTemplate(m, tpl, res, Imgproc.TM_CCOEFF_NORMED)
+        m.release()
+        val out = ArrayList<Pair<Double, Double>>()
+        for (i in 0 until 4) {
+            val mm = Core.minMaxLoc(res)
+            if (mm.maxVal < 0.70) break
+            out.add(Pair(mm.maxLoc.x + tpl.cols() / 2.0, 280 + mm.maxLoc.y + tpl.rows() / 2.0))
+            Imgproc.circle(res, org.opencv.core.Point(mm.maxLoc.x, mm.maxLoc.y), 40, Scalar(-1.0), -1)
+        }
+        res.release()
+        return out.sortedBy { it.second }
+    }
+
+    private val epCyanLo = Scalar(85.0, 100.0, 170.0)
+    private val epCyanHi = Scalar(105.0, 255.0, 255.0)
+    private val epGreenLo = Scalar(40.0, 100.0, 100.0)
+    private val epGreenHi = Scalar(85.0, 255.0, 255.0)
+    private val epOrangeLo = Scalar(5.0, 170.0, 200.0)
+    private val epOrangeHi = Scalar(20.0, 255.0, 255.0)
+
+    private fun epIslandOf(text: String): EpIsland? = epIslands.firstOrNull { i -> i.keys.any { it in text } }
+
     /**
-     * Point de départ : menu de gauche (languette), onglet « Quot. », ligne de la tâche sous « Épreuve Mystique »
-     * (son nom change : Colisée, Forêt de la Vie, Nexus de la Connaissance, Fort en Fusion, Flèche Éclatante…) :
-     * on touche son texte. La suite du parcours est à construire : l'appli s'arrête sur l'écran ouvert.
+     * Parcours complet : menu de gauche > onglet Quot. > tâche « Épreuve Mystique » > carte > île (« ! » = formation à créer,
+     * Piller, Défi) > Config. d'Escouade (3 équipes pour Flèche Éclatante et Colisée) > Déployer > combats (Passer /
+     * Réessayer) jusqu'aux 5 tentatives du jour > île suivante. Le jour de la semaine sert de contrôle de sécurité.
      */
     private fun detectEpreuves(rgb: Mat) {
         val now = SystemClock.uptimeMillis()
-        if (now - lastClick < minOf(cooldown, 600L) || epFinished) return
-        if (epClickedAt > 0L) {
-            if (now - epClickedAt > 2_500L) epStop("tâche touchée, écran ouvert (suite à construire)")
+        if (now - lastClick < minOf(cooldown, 600L) || epFinished || now < epWaitUntil) return
+
+        // 1) écrans de résultat de combat (le fond flouté peut encore montrer d'autres textes : on les teste d'abord)
+        val ribbon = ocrRef(rgb, 150, 740, 930, 850)
+        if ("victoire" in ribbon) {
+            epIdleAt = now
+            if (epVictoryAt == 0L) epVictoryAt = now
+            if (!epCheckToggled) {
+                epCheckToggled = true
+                if (colorRect(rgb, 262, 1690, 318, 1745, epGreenLo, epGreenHi) < 0.10) {
+                    clickRef(290.0, 1718.0, "épreuves : case « Défier Auto. La Prochaine Étape » cochée")
+                    epWaitUntil = now + 800L
+                    return
+                }
+            }
+            if (now - epVictoryAt > 6_000L) {
+                epVictoryAt = now
+                clickRef(785.0, 1545.0, "épreuves : victoire, bouton « suivant » touché (l'enchaînement auto n'est pas parti)")
+            }
             return
         }
+        epVictoryAt = 0L
+        if ("faite" in ribbon) {
+            epIdleAt = now
+            epCheckToggled = false
+            if (colorRect(rgb, 570, 1710, 1000, 1800, epCyanLo, epCyanHi) >= 0.35) {
+                epFights++
+                if (epFights > 250) { epStop("plus de 250 combats, arrêt de sécurité"); return }
+                clickRef(785.0, 1755.0, "épreuves : défaite, « Réessayer » (combat $epFights)")
+                epWaitUntil = now + 1500L
+            } else {
+                epCurIsland?.let { epDone.add(it.id); log("épreuves : ${it.label} : plus de tentatives aujourd'hui") }
+                clickRef(230.0, 370.0, "épreuves : défaite, plus de tentatives : fermeture de la fenêtre")
+                epWaitUntil = now + 1500L
+            }
+            return
+        }
+
+        // 2) fenêtre « Récompenses de Pillage »
+        val pill = ocrRef(rgb, 150, 980, 930, 1120)
+        if ("pillage" in pill && colorRect(rgb, 330, 1735, 750, 1815, epGreenLo, epGreenHi) >= 0.4) {
+            epIdleAt = now
+            clickRef(540.0, 1775.0, "épreuves : Récompenses de Pillage : Récupérer")
+            epWaitUntil = now + 1500L
+            return
+        }
+
+        // 3) fenêtres (testées avant le titre : leur fond flouté montre encore le titre de l'écran dessous) : Sélectionner des Héros, Taux
+        val pop = ocrRef(rgb, 240, 430, 840, 520)
+        if ("lectionner" in pop || "héros" in pop || "heros" in pop) {
+            epIdleAt = now
+            epHandleHeroes(rgb, now)
+            return
+        }
+        val tx = ocrRef(rgb, 400, 690, 700, 775)
+        if ("taux" in tx && colorRect(rgb, 330, 1680, 750, 1760, epCyanLo, epCyanHi) >= 0.35) {
+            epIdleAt = now
+            epHandleTaux(rgb, now)
+            return
+        }
+
+        // 4) titre de l'écran (barre du haut) : Config. d'Escouade, carte, île / formation
+        val title = ocrRef(rgb, 100, 100, 720, 190)
+        if ("config" in title || "escouade" in title) {
+            epIdleAt = now
+            epHandleConfig(rgb, now)
+            return
+        }
+        if ("mystique" in title || ("preuve" in title && "classement" !in title)) {
+            epIdleAt = now
+            epHandleMap(rgb, now)
+            return
+        }
+        val isl = epIslandOf(title)
+        if (isl != null) {
+            epIdleAt = now
+            val bar = ocrRef(rgb, 30, 2030, 340, 2090)
+            if ("taux" in bar || "troupes" in bar) epHandleFormation(rgb, now, isl) else epHandleIsland(rgb, now, isl)
+            return
+        }
+
+        // 5) combat en cours : bouton « Passer » en haut à droite
+        val pass = ocrRef(rgb, 800, 290, 1070, 390)
+        if ("passer" in pass) {
+            epIdleAt = now
+            if (now - epPassAt > 2_500L) {
+                epPassAt = now
+                clickRef(940.0, 340.0, "épreuves : combat, « Passer »")
+            }
+            return
+        }
+
+        // 6) écran Récompenses / ville / menu Quot.
         val rw = ocrRef(rgb, 200, 2150, 880, 2240)
         if ("appuie" in rw || "quitter" in rw) {
             epIdleAt = now
@@ -4101,6 +4351,7 @@ class BotService : Service() {
         if ("ville" in tabs || "nature" in tabs || "quot" in tabs) {
             epIdleAt = now
             epBackTries = 0
+            if (now - epClickedAt < 5_000L) return
             val q = meanV(rgb, 455, 625, 655, 685)
             val v = meanV(rgb, 20, 625, 220, 685)
             if (!(q > 150 && q > v + 40)) {
@@ -4114,11 +4365,12 @@ class BotService : Service() {
             val y1 = minOf((1455 * sc).toInt(), rgb.rows())
             val lines = ocrLines(Mat(rgb, Rect(x0, y0, x1 - x0, y1 - y0)), false)
             if (lines.isEmpty()) return
-            val names = listOf("colis", "forêt de la vie", "foret de la vie", "nexus", "fort en fusion", "flèche éclatante", "fleche eclatante")
-            val title = lines.firstOrNull { "mystique" in it.text.lowercase() }
+            val names = listOf("colis", "forêt de la vie", "foret de la vie", "nexus", "fort en fusion", "forteresse", "grotte",
+                "flèche éclatante", "fleche eclatante", "flèche radieuse")
+            val titleLine = lines.firstOrNull { "mystique" in it.text.lowercase() }
             val nameLine = lines.firstOrNull { l -> names.any { it in l.text.lowercase() } }
             val clickY = when {
-                title != null -> (y0 + title.cy) / sc + 79.0 // la ligne de la tâche est sous le titre de section
+                titleLine != null -> (y0 + titleLine.cy) / sc + 79.0 // la ligne de la tâche est sous le titre de section
                 nameLine != null -> (y0 + nameLine.cy) / sc + 21.0
                 else -> -1.0
             }
@@ -4134,19 +4386,225 @@ class BotService : Service() {
         val city = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar } >= 2
         if (city) {
             epIdleAt = now
-            if (now - epTabAt > 2_500L) {
+            if (now - epTabAt > 2_500L && now - epClickedAt > 5_000L) {
                 epTabAt = now
                 clickRef(20.0, 1075.0, "épreuves mystiques : ouverture du menu (languette)")
             }
             return
         }
-        if (now - epIdleAt > 10_000L) {
+        if (now - epIdleAt > 15_000L) {
             epIdleAt = now
             if (++epBackTries > 4) { epStop("écran inconnu, arrêt"); return }
             lastClick = now
             backArrow()
             log("épreuves mystiques : écran inconnu, flèche retour")
         }
+    }
+
+    /** Carte « Épreuve Mystique » : choisit la prochaine île ouverte et attendue ce jour-là (le « ! » d'abord, du haut vers le bas). */
+    private fun epHandleMap(rgb: Mat, now: Long) {
+        val today = epToday()
+        if (now - epMapScanAt > 8_000L || epMapOpen.isEmpty()) {
+            epMapOpen = epIslands.filter { isl ->
+                val t = ocrRef(rgb, isl.lab[0], isl.lab[1], isl.lab[2], isl.lab[3])
+                isl.keys.any { it in t } && "ouvre" !in t
+            }
+            epMapScanAt = now
+            log("épreuves : îles ouvertes sur la carte : ${epMapOpen.joinToString { it.label }.ifEmpty { "aucune" }}")
+        }
+        val expected = epIslands.filter { today in it.days }
+        val unexpected = epMapOpen.filter { it !in expected }
+        if (unexpected.isNotEmpty() && !epUnexpectedLogged) {
+            epUnexpectedLogged = true
+            log("épreuves : ATTENTION, île ouverte hors du calendrier de ce jour (${unexpected.joinToString { it.label }}) : ignorée")
+        }
+        val cand = epMapOpen.filter { it in expected && it.id !in epDone }.sortedBy { it.cy }
+        if (cand.isEmpty()) {
+            if (epMapOpen.isEmpty() && epDone.isEmpty()) {
+                if (++epListTries > 3) epStop("aucune île ouverte reconnue sur la carte (jour du jeu : ${expected.joinToString { it.label }})")
+                epMapScanAt = 0L
+                epWaitUntil = now + 1500L
+                return
+            }
+            backArrow()
+            epStop("terminé : toutes les épreuves du jour sont faites (${epDone.joinToString { it }})")
+            return
+        }
+        val isl = cand.first()
+        epCurIsland = isl
+        epCurSquad = -1
+        epRatioDone.fill(false)
+        val bang = epBangs(rgb).minByOrNull { abs(it.first - isl.cx) + abs(it.second - isl.cy) }
+            ?.takeIf { abs(it.first - isl.cx) + abs(it.second - isl.cy) < 360 }
+        if (bang != null) {
+            clickRef(bang.first, bang.second, "épreuves : ${isl.label} : clic sur le « ! » (formation à créer)")
+        } else {
+            clickRef(isl.cx, isl.cy, "épreuves : ${isl.label} : clic sur l'île (pas de « ! »)")
+        }
+        epMapScanAt = 0L
+        epWaitUntil = now + 2_000L
+    }
+
+    /** Écran d'une île : Piller (premier jour) puis Défi ; Défi grisé = plus de tentatives. */
+    private fun epHandleIsland(rgb: Mat, now: Long, isl: EpIsland) {
+        epCurIsland = isl
+        val bottom = ocrRef(rgb, 150, 2170, 930, 2320)
+        if ("piller" in bottom || "pille" in bottom) {
+            clickRef(540.0, 2243.0, "épreuves : ${isl.label} : Piller")
+            epWaitUntil = now + 2_000L
+            return
+        }
+        if (colorRect(rgb, 320, 2185, 760, 2305, epCyanLo, epCyanHi) >= 0.35) {
+            clickRef(540.0, 2245.0, "épreuves : ${isl.label} : Défi")
+            epWaitUntil = now + 2_200L
+            return
+        }
+        if ("défi" in bottom || "defi" in bottom || "tentative" in bottom || "actualisation" in bottom) {
+            epDone.add(isl.id)
+            log("épreuves : ${isl.label} : Défi grisé (plus de tentatives) : retour")
+            lastClick = now
+            backArrow()
+            epWaitUntil = now + 1_500L
+        }
+    }
+
+    /** Config. d'Escouade : crée les équipes vides dans l'ordre, puis Déployer. */
+    private fun epHandleConfig(rgb: Mat, now: Long) {
+        val isl = epCurIsland
+        if (isl != null && !isl.teams) {
+            epStop("« Config. d'Escouade » inattendu pour ${isl.label} (épreuve à taux seul : écran à construire)")
+            return
+        }
+        val tileY = intArrayOf(440, 958, 1475)
+        val btnY = doubleArrayOf(617.0, 1133.0, 1650.0)
+        val filled = BooleanArray(3) { epSat(rgb, 270, tileY[it] - 45, 365, tileY[it] + 45) > 70.0 }
+        val first = filled.indexOfFirst { !it }
+        if (first >= 0) {
+            if (epCurSquad == first && now - epConfigClickAt < 4_000L) return
+            epCurSquad = first
+            epRatioDone[first] = false
+            epSelK = -1
+            epConfigClickAt = now
+            clickRef(540.0, btnY[first], "épreuves : équipe ${first + 1} vide : Modifier la Formation")
+            epWaitUntil = now + 1_800L
+            return
+        }
+        if (colorRect(rgb, 560, 2160, 1010, 2260, epCyanLo, epCyanHi) >= 0.35) {
+            epDeployAt = now
+            clickRef(783.0, 2210.0, "épreuves : 3 équipes prêtes : Déployer")
+            epWaitUntil = now + 2_500L
+            epCurSquad = -1
+        } else if (epDeployAt == 0L || now - epDeployAt > 8_000L) {
+            epDeployAt = now
+            log("épreuves : 3 équipes prêtes mais « Déployer » n'est pas actif : attente")
+        }
+    }
+
+    /** Écran de formation d'une équipe : cartes de héros en haut, barre « Taux de Troupes » et boutons en bas. */
+    private fun epHandleFormation(rgb: Mat, now: Long, isl: EpIsland) {
+        val cx = doubleArrayOf(257.0, 540.0, 823.0)
+        val f = (0 until 3).count { epSat(rgb, cx[it].toInt() - 60, 450, cx[it].toInt() + 60, 600) > 60.0 }
+        if (f < 3) {
+            if (!isl.teams) { epStop("formation incomplète pour ${isl.label} (épreuve à taux seul : à construire)"); return }
+            if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
+            clickRef(cx[f], 535.0, "épreuves : équipe ${epCurSquad + 1} : « + » du héros ${f + 1}")
+            epWaitUntil = now + 1_600L
+            return
+        }
+        if (!isl.teams && epCurSquad < 0) epCurSquad = 0
+        if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
+        if (!epRatioDone[epCurSquad]) {
+            epTauxFails = 0; epTauxStuck = 0; epLastVals = ""
+            clickRef(495.0, 2200.0, "épreuves : équipe ${epCurSquad + 1} : héros en place, bouton « Taux »")
+            epWaitUntil = now + 1_500L
+            return
+        }
+        if (!isl.teams) {
+            epStop("taux réglés (${epTarget(isl, 0).joinToString("/")}) pour ${isl.label} ; la suite de cette épreuve est à construire")
+            return
+        }
+        clickRef(822.0, 2240.0, "épreuves : équipe ${epCurSquad + 1} terminée : Modifier la Formation (retour à la config)")
+        epWaitUntil = now + 1_800L
+    }
+
+    /** Fenêtre « Sélectionner des Héros » : assigne les 3 héros de l'équipe (reconnus par leur portrait), puis ferme. */
+    private fun epHandleHeroes(rgb: Mat, now: Long) {
+        val team = epCurSquad
+        if (team < 0) { epStop("fenêtre des héros sans équipe en cours"); return }
+        val sx = intArrayOf(245, 540, 833)
+        val k = (0 until 3).count { epSat(rgb, sx[it] - 60, 700, sx[it] + 60, 850) > 60.0 }
+        if (k >= 3) {
+            clickRef(965.0, 475.0, "épreuves : équipe ${team + 1} : 3 héros assignés, fermeture de la fenêtre")
+            epWaitUntil = now + 1_300L
+            epSelK = -1
+            return
+        }
+        if (k != epSelK) { epSelK = k; epSelClicked = false; epSelSwipes = 0; epAssignTries = 0 }
+        val key = epTeamHeroes[team][k]
+        if (!epSelClicked) {
+            val p = epFindHero(rgb, key)
+            if (p != null) {
+                clickRef(p.first, p.second, "épreuves : équipe ${team + 1} : héros ${k + 1} ($key) touché")
+                epSelClicked = true
+                epWaitUntil = now + 700L
+                return
+            }
+            if (epSelSwipes < 2) {
+                epSelSwipes++
+                lastClick = now
+                ClickAccessibilityService.instance?.swipe((540 * w / 1080.0).toFloat(), (1560 * w / 1080.0).toFloat(), (540 * w / 1080.0).toFloat(), (1250 * w / 1080.0).toFloat(), 600)
+                log("épreuves : héros $key introuvable dans la liste visible : défilement ${epSelSwipes}")
+                epWaitUntil = now + 1_000L
+                return
+            }
+            log("épreuves : héros $key introuvable : on prend le héros sélectionné par défaut (le plus fort du bon type)")
+            epSelClicked = true
+        }
+        if (++epAssignTries > 4) { epStop("« Assigner » sans effet pour le héros ${k + 1} de l'équipe ${team + 1}"); return }
+        clickRef(770.0, 1755.0, "épreuves : équipe ${team + 1} : Assigner (héros ${k + 1})")
+        epSelClicked = false
+        epWaitUntil = now + 1_500L
+    }
+
+    /** Fenêtre « Taux » : lit les 3 pourcentages et corrige avec − / + (1 % par appui) : on baisse d'abord ce qui dépasse. */
+    private fun epHandleTaux(rgb: Mat, now: Long) {
+        val isl = epCurIsland ?: run { epStop("fenêtre Taux sans épreuve en cours"); return }
+        val squad = if (isl.teams) epCurSquad else 0
+        if (squad < 0) { epStop("fenêtre Taux sans équipe en cours"); return }
+        val tgt = epTarget(isl, squad)
+        val ry = intArrayOf(1047, 1267, 1487)
+        val v = IntArray(3) {
+            val s = ocrRef(rgb, 840, ry[it] - 30, 948, ry[it] + 30, true).replace('o', '0').filter { c -> c.isDigit() }
+            s.toIntOrNull()?.takeIf { n -> n in 0..100 } ?: -1
+        }
+        if (v.any { it < 0 }) {
+            if (++epTauxFails > 12) epStop("pourcentages illisibles dans la fenêtre Taux")
+            epWaitUntil = now + 300L
+            return
+        }
+        epTauxFails = 0
+        val diff = IntArray(3) { v[it] - tgt[it] }
+        if (diff.all { it == 0 }) {
+            epRatioDone[squad] = true
+            clickRef(540.0, 1720.0, "épreuves : taux ${v.joinToString("/")} atteints : Confirmer")
+            epWaitUntil = now + 1_500L
+            return
+        }
+        val key = v.joinToString("/")
+        if (key == epLastVals) epTauxStuck++ else { epTauxStuck = 0; epLastVals = key }
+        if (epTauxStuck > 5) { epStop("taux bloqués à $key (cible ${tgt.joinToString("/")})"); return }
+        val minus = diff.any { it > 0 }
+        val i = if (minus) diff.indices.maxByOrNull { diff[it] }!! else diff.indices.minByOrNull { diff[it] }!!
+        val n = minOf(abs(diff[i]), 5)
+        val x = if (minus) 304.0 else 768.0
+        val yy = doubleArrayOf(1045.0, 1265.0, 1485.0)[i]
+        for (c in 0 until n) {
+            epClick(x, yy)
+            Thread.sleep(140)
+        }
+        lastClick = SystemClock.uptimeMillis()
+        log("épreuves : taux ${v.joinToString("/")} -> cible ${tgt.joinToString("/")} : ligne ${i + 1} ${if (minus) "−" else "+"}$n")
+        epWaitUntil = now + 450L
     }
 
     private var rewardTaps = 0

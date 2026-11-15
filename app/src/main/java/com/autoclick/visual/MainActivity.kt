@@ -466,21 +466,62 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Épreuves Mystiques (à la demande) ----------
 
+    private val epGroups = listOf(
+        Triple("Flèche Éclatante et Colisée, équipe 1 (en haut)", "epr_team0_", intArrayOf(60, 40, 0)),
+        Triple("Flèche Éclatante et Colisée, équipe 2", "epr_team1_", intArrayOf(45, 15, 40)),
+        Triple("Flèche Éclatante et Colisée, équipe 3", "epr_team2_", intArrayOf(50, 20, 30)),
+        Triple("Forêt de la Vie (mercredi, jeudi)", "epr_foret_", intArrayOf(50, 10, 40)),
+        Triple("Grotte de Cristal (mercredi, jeudi)", "epr_grotte_", intArrayOf(50, 15, 35)),
+        Triple("Nexus du Savoir (vendredi, samedi)", "epr_nexus_", intArrayOf(55, 5, 40)),
+        Triple("Forteresse en Fusion (vendredi, samedi)", "epr_fort_", intArrayOf(50, 10, 40))
+    )
+    private val epEdits = ArrayList<EditText>()
+    private lateinit var epResetEdit: EditText
+
     private fun showEpreuves() {
         screen = 9
+        epEdits.clear()
         val root = newRoot()
         root.addView(backToMenuButton())
         root.addView(TextView(this).apply { text = "Épreuves Mystiques"; textSize = 22f })
         root.addView(
             label(
-                "Point de départ (la suite se construit au fur et à mesure) : l'appli ouvre le menu de gauche " +
-                    "(languette), l'onglet « Quot. », puis touche le texte de la tâche sous « Épreuve Mystique » " +
-                    "(Colisée, Forêt de la Vie, Nexus de la Connaissance, Fort en Fusion, Flèche Éclatante…). " +
-                    "Elle s'arrête ensuite sur l'écran ouvert."
+                "L'appli ouvre le menu de gauche > Quot. > tâche « Épreuve Mystique », puis, île par île (la plus haute " +
+                    "d'abord) : « ! » (formation à créer), Piller, Défi, équipes, Déployer, combats (Passer / Réessayer) " +
+                    "jusqu'aux 5 tentatives du jour. Flèche Éclatante (dimanche) et Colisée (lundi, mardi) : 3 équipes " +
+                    "de héros fixes. Les 4 autres épreuves : taux de troupes seulement (suite à construire)."
             )
         )
+        root.addView(label("Heure de remise à zéro du jeu (heure de Paris). Le jour de la semaine, qui sert de contrôle, change à cette heure :"))
+        epResetEdit = numberField("epResetHour", 1)
+        root.addView(epResetEdit)
+        root.addView(label("Taux de troupes : Infanterie / Cavalerie / Archer (le total doit faire 100) :"))
+        for ((title, prefix, def) in epGroups) {
+            root.addView(label(title))
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (i in 0 until 3) {
+                val e = numberField(prefix + i, def[i])
+                row.addView(e, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                epEdits.add(e)
+            }
+            root.addView(row)
+        }
         root.addView(label("Ouvrez le jeu sur la ville, puis démarrez."))
         root.addView(button("Démarrer") { start("epreuves") })
+    }
+
+    private fun saveEpreuves() {
+        val e = sp.edit()
+        e.putInt("epResetHour", (epResetEdit.text.toString().toIntOrNull() ?: 1).coerceIn(0, 23))
+        for ((g, grp) in epGroups.withIndex()) {
+            val v = IntArray(3) { (epEdits[g * 3 + it].text.toString().toIntOrNull() ?: -1) }
+            if (v.all { it in 0..100 } && v.sum() == 100) {
+                for (i in 0 until 3) e.putInt(grp.second + i, v[i])
+            } else {
+                Toast.makeText(this, "${grp.first} : le total doit faire 100, valeurs ignorées", Toast.LENGTH_LONG).show()
+            }
+        }
+        e.apply()
     }
 
     // ---------- Hunt (chasses de Terreur) ----------
@@ -566,7 +607,11 @@ class MainActivity : AppCompatActivity() {
                 .apply()
             return
         }
-        if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8 || screen == 9) return
+        if (screen == 9) {
+            saveEpreuves()
+            return
+        }
+        if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8) return
         val e = sp.edit()
         e.putInt("threshold", 55 + thresholdBar.progress)
         e.putLong("interval", intervalEdit.text.toString().toLongOrNull() ?: 500L)
