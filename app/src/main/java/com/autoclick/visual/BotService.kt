@@ -837,7 +837,7 @@ class BotService : Service() {
                 val f = File(filesDir, "journal.txt")
                 val line = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.FRANCE).format(java.util.Date()) + " " + msg + "\n"
                 f.appendText(line)
-                if (f.length() > 30_000) f.writeText(f.readLines().takeLast(150).joinToString("\n", postfix = "\n"))
+                if (f.length() > 60_000) f.writeText(f.readLines().takeLast(400).joinToString("\n", postfix = "\n"))
             }
         } catch (_: Exception) {
         }
@@ -1622,11 +1622,12 @@ class BotService : Service() {
     private var dailyIdleAt = 0L // dernier instant où un écran connu a été reconnu : au-delà de 10 s sans rien, on abandonne
     private var dailyFinished = false
     private val dailyAttempts = HashMap<String, Int>()
+    private var lastListDump = ""
     private val dailyLaunchAt = HashMap<String, Long>()
 
     private fun resetDaily() {
         dailyState = "OPEN"; dailyStep = 0; dailyStepAt = 0L; dailyTries = 0; dailyFinished = false
-        dailyAttempts.clear()
+        dailyAttempts.clear(); lastListDump = ""
     }
 
     private fun loadDaily() {
@@ -1881,6 +1882,9 @@ class BotService : Service() {
                     if (++dailyTries > 4) { dailyState = "OPEN"; dailyTries = 0 }
                     return
                 }
+                // diagnostic : ce que l'OCR lit dans la liste (une fois par contenu différent)
+                val dump = lines.joinToString(" | ") { it.text.trim().replace("\n", " ") }.take(420)
+                if (dump != lastListDump) { lastListDump = dump; log("daily : liste lue : $dump") }
                 // Tâches connues, repérées par leur titre ; une ligne présente = à faire (le jeu masque les terminées).
                 val cands = ArrayList<Pair<Double, String>>()
                 var aventureCy = -1.0
@@ -1910,7 +1914,7 @@ class BotService : Service() {
                     // « Récomp. En Ligne » revient toutes les quelques minutes : on la reprend si la dernière visite date de plus de 30 s
                     if (key == "enligne" && (dailyAttempts[key] ?: 0) >= 2 && now - (dailyLaunchAt[key] ?: 0L) > 30_000L) dailyAttempts[key] = 0
                     if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 1 else 2)) { // un seul recrutement gratuit par passage
-                        if (key == "contrib") log("daily : Contrib. d'All. visible mais déjà tentée ${dailyAttempts[key]} fois : on passe")
+                        log("daily : $key visible mais déjà tentée ${dailyAttempts[key]} fois : on passe")
                         continue
                     }
                     val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence

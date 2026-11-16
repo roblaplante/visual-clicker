@@ -676,9 +676,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun showLog() {
         val f = File(filesDir, "journal.txt")
-        val text = if (f.exists()) f.readLines().takeLast(60).joinToString("\n") else "(journal vide)"
+        val text = if (f.exists()) f.readLines().takeLast(200).joinToString("\n") else "(journal vide)"
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Journal (60 dernières lignes)")
+            .setTitle("Journal (200 dernières lignes)")
             .setMessage(text)
             .setPositiveButton("Fermer", null)
             .show()
