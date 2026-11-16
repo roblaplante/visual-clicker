@@ -1898,7 +1898,8 @@ class BotService : Service() {
                     if ("creuset" in t || "creuseur" in t) creusetCy = maxOf(creusetCy, l.cy) // titre de section puis tâche : la plus basse
                     if ("triomphe" in t && "activit" in t) cands.add(Pair(l.cy, "triomphe")) // Triomphe d'activité quotidienne
                     // « Contrib. d'All. » : titre de section puis tâche (la ligne « Contrib 10/25 » n'a pas « all »)
-                    if ("contrib" in t && "all" in t) contribCy = maxOf(contribCy, l.cy)
+                    // l'OCR lit parfois « All » comme « AII » (l/I) ou colle la ligne « Contrib 25/25 » : on accepte ces variantes
+                    if ("contrib" in t && ("all" in t || "aii" in t || "ali" in t || "d'a" in t || "d’a" in t || '/' !in t)) contribCy = maxOf(contribCy, l.cy)
                 }
                 if (contribCy >= 0) cands.add(Pair(contribCy, "contrib"))
                 if (creusetCy >= 0) cands.add(Pair(creusetCy, "creuset"))
@@ -1908,7 +1909,10 @@ class BotService : Service() {
                 for ((cy, key) in cands) {
                     // « Récomp. En Ligne » revient toutes les quelques minutes : on la reprend si la dernière visite date de plus de 30 s
                     if (key == "enligne" && (dailyAttempts[key] ?: 0) >= 2 && now - (dailyLaunchAt[key] ?: 0L) > 30_000L) dailyAttempts[key] = 0
-                    if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 1 else 2)) continue // un seul recrutement gratuit par passage
+                    if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 1 else 2)) { // un seul recrutement gratuit par passage
+                        if (key == "contrib") log("daily : Contrib. d'All. visible mais déjà tentée ${dailyAttempts[key]} fois : on passe")
+                        continue
+                    }
                     val rowY = (y0 + cy) / sc // centre de la ligne en coordonnées de référence
                     dailyAttempts[key] = (dailyAttempts[key] ?: 0) + 1
                     dailyLaunchAt[key] = now
@@ -1926,7 +1930,11 @@ class BotService : Service() {
                     launched = true
                     break
                 }
-                if (!launched) dailyFinish("Daily terminé : plus de tâche à faire")
+                if (!launched) {
+                    if (contribCy < 0) lines.filter { "contr" in it.text.lowercase() || "all" in it.text.lowercase() }
+                        .takeIf { it.isNotEmpty() }?.let { ls -> log("daily : lecture OCR près de Contrib : " + ls.joinToString(" | ") { it.text.trim() }) }
+                    dailyFinish("Daily terminé : plus de tâche à faire")
+                }
             }
             "ENLIGNE" -> {
                 if (dailyStep == 2) {
