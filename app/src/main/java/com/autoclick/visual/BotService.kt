@@ -4107,6 +4107,8 @@ class BotService : Service() {
     private var epWaitUntil = 0L
     private var epCurSquad = -1
     private val epRatioDone = BooleanArray(3)
+    private val epCleared = BooleanArray(3) // héros déjà présents retirés à la première arrivée sur l'écran de formation de l'équipe
+    private var epClearTries = 0
     private val epDone = HashSet<String>()
     private var epCurIsland: EpIsland? = null
     private var epMapScanAt = 0L
@@ -4130,7 +4132,7 @@ class BotService : Service() {
 
     private fun resetEpreuves() {
         epFinished = false; epClickedAt = 0L; epIdleAt = SystemClock.uptimeMillis(); epBackTries = 0; epListTries = 0; epTabAt = 0L
-        epWaitUntil = 0L; epCurSquad = -1; epRatioDone.fill(false); epDone.clear(); epCurIsland = null; epMapScanAt = 0L
+        epWaitUntil = 0L; epCurSquad = -1; epRatioDone.fill(false); epCleared.fill(false); epClearTries = 0; epDone.clear(); epCurIsland = null; epMapScanAt = 0L
         epMapOpen = emptyList(); epSelK = -1; epSelClicked = false; epSelSwipes = 0; epAssignTries = 0
         epTauxFails = 0; epTauxStuck = 0; epLastVals = ""; epFights = 0; epPassAt = 0L; epVictoryAt = 0L; epCheckToggled = false
         epDeployAt = 0L; epConfigClickAt = 0L; epUnexpectedLogged = false
@@ -4469,7 +4471,7 @@ class BotService : Service() {
         val isl = cand.first()
         epCurIsland = isl
         epCurSquad = -1
-        epRatioDone.fill(false)
+        epRatioDone.fill(false); epCleared.fill(false); epClearTries = 0
         val bang = epBangs(rgb).minByOrNull { abs(it.first - isl.cx) + abs(it.second - isl.cy) }
             ?.takeIf { abs(it.first - isl.cx) + abs(it.second - isl.cy) < 360 }
         if (bang != null) {
@@ -4519,6 +4521,7 @@ class BotService : Service() {
             if (epCurSquad == first && now - epConfigClickAt < 4_000L) return
             epCurSquad = first
             epRatioDone[first] = false
+            epCleared[first] = false; epClearTries = 0
             epSelK = -1
             epConfigClickAt = now
             clickRef(540.0, btnY[first], "épreuves : équipe ${first + 1} vide : Modifier la Formation")
@@ -4563,8 +4566,20 @@ class BotService : Service() {
         // carte pleine = pastille orange « − » (retirer) en haut à droite de la carte ; emplacement vide : aucune pastille
         val bx = doubleArrayOf(359.0, 642.0, 925.0)
         val f = (0 until 3).count { colorRect(rgb, bx[it].toInt() - 30, 325, bx[it].toInt() + 30, 380, epBadgeLo, epBadgeHi) >= 0.3 }
+        if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
+        // première arrivée : des héros peuvent déjà être en place (ancienne formation) : on les retire un par un avec la pastille orange « − »
+        if (!epCleared[epCurSquad]) {
+            val full = (0 until 3).firstOrNull { colorRect(rgb, bx[it].toInt() - 30, 325, bx[it].toInt() + 30, 380, epBadgeLo, epBadgeHi) >= 0.3 }
+            if (full == null) {
+                epCleared[epCurSquad] = true
+            } else {
+                if (++epClearTries > 9) { epStop("impossible de retirer les héros déjà en place (équipe ${epCurSquad + 1})"); return }
+                clickRef(bx[full] - 2, 355.0, "épreuves : équipe ${epCurSquad + 1} : héros déjà en place, retrait du héros ${full + 1} (« − » orange)")
+                epWaitUntil = now + 1_000L
+                return
+            }
+        }
         if (f < 3) {
-            if (epCurSquad < 0) { epStop("écran de formation sans équipe en cours"); return }
             clickRef(cx[f], 535.0, "épreuves : équipe ${epCurSquad + 1} : « + » du héros ${f + 1}")
             epWaitUntil = now + 1_600L
             return
