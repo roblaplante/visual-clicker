@@ -1897,6 +1897,7 @@ class BotService : Service() {
                     if ("aventure" in t && "animal" in t) aventureCy = maxOf(aventureCy, l.cy)
                     if ("provisions" in t) cands.add(Pair(l.cy, "provisions"))
                     if ("avanc" in t) cands.add(Pair(l.cy, "recrute")) // Recruter des Héros : Avancé
+                    if ("epique" in t.replace('é', 'e') && "mystique" !in t) cands.add(Pair(l.cy, "epique")) // Recruter des Héros : Épique (gratuit)
                     if ("fontaine" in t) cands.add(Pair(l.cy, "fontaine")) // Collecte d'Essence d'Eau : Fontaine Vitale
                     if ("inactiv" in t) cands.add(Pair(l.cy, "conquete")) // Conquérir : Revenu d'inactivité
                     if ("creuset" in t || "creuseur" in t) creusetCy = maxOf(creusetCy, l.cy) // titre de section puis tâche : la plus basse
@@ -1913,7 +1914,7 @@ class BotService : Service() {
                 for ((cy, key) in cands) {
                     // « Récomp. En Ligne » revient toutes les quelques minutes : on la reprend si la dernière visite date de plus de 30 s
                     if (key == "enligne" && (dailyAttempts[key] ?: 0) >= 2 && now - (dailyLaunchAt[key] ?: 0L) > 30_000L) dailyAttempts[key] = 0
-                    if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute") 1 else 2)) { // un seul recrutement gratuit par passage
+                    if ((dailyAttempts[key] ?: 0) >= (if (key == "recrute" || key == "epique") 1 else 2)) { // un seul recrutement gratuit par passage
                         log("daily : $key visible mais déjà tentée ${dailyAttempts[key]} fois : on passe")
                         continue
                     }
@@ -1965,6 +1966,7 @@ class BotService : Service() {
             "CONTRIB" -> detectContrib(rgb, now)
             "ORDRES" -> detectOrdres(rgb, now)
             "RECRUTE" -> detectRecrute(rgb, now)
+            "EPIQUE" -> detectRecrute(rgb, now, true)
             "TRIOMPHE" -> detectTriomphe(rgb, now)
             "FONTAINE" -> detectFontaine(screen, rgb, now)
             "COMBAT" -> detectCombat(screen, rgb, now)
@@ -2259,9 +2261,10 @@ class BotService : Service() {
      * une animation (on touche en haut de l'écran) > écran « Récompenses » : flèche bleue > si un recrutement
      * gratuit reste (bouton vert), on recommence, sinon flèche bleue pour revenir à la ville.
      */
-    private fun detectRecrute(rgb: Mat, now: Long) {
+    private fun detectRecrute(rgb: Mat, now: Long, epic: Boolean = false) {
+        val nom = if (epic) "épique" else "avancé"
         if (now - dailyIdleAt > 10_000L) {
-            log("daily : Recrutement avancé abandonné (10 s sans écran reconnu)")
+            log("daily : Recrutement $nom abandonné (10 s sans écran reconnu)")
             lastClick = now
             backArrow()
             dailyState = "OPEN"
@@ -2285,14 +2288,18 @@ class BotService : Service() {
         val orangeHi = Scalar(25.0, 255.0, 255.0)
         val orangeBtns = listOf(Rect(590, 1640, 410, 95), Rect(70, 2180, 430, 110), Rect(590, 2180, 410, 110))
             .count { colorRect(rgb, it.x, it.y, it.x + it.width, it.y + it.height, orangeLo, orangeHi) >= 0.4 }
-        if ("prochain" in recruit || "gratuit" in recruit || orangeBtns >= 2) {
+        val greenLo = Scalar(50.0, 90.0, 100.0)
+        val greenHi = Scalar(90.0, 255.0, 255.0)
+        // bouton vert « Recruter une fois Gratuit » : on mesure tout le bouton (le texte blanc au centre fausse un petit point)
+        val greenAdv = colorRect(rgb, 90, 1640, 490, 1735, greenLo, greenHi)
+        val greenEpic = colorRect(rgb, 90, 2185, 490, 2290, greenLo, greenHi)
+        if ("prochain" in recruit || "gratuit" in recruit || orangeBtns >= 2 || greenAdv >= 0.3 || greenEpic >= 0.3) {
             dailyIdleAt = now
-            // bouton vert « Recruter une fois Gratuit » : on mesure tout le bouton (le texte blanc au centre fausse un petit point)
-            val green = colorRect(rgb, 90, 1640, 490, 1735, Scalar(50.0, 90.0, 100.0), Scalar(90.0, 255.0, 255.0))
+            val green = if (epic) greenEpic else greenAdv
             if (dailyStep == 0 && green >= 0.3 && dailyBtn < 1) {
                 dailyBtn++
                 dailyStep = 1
-                clickRef(287.0, 1690.0, "daily : Recrutement avancé : clic Recruter une fois (gratuit) n°$dailyBtn")
+                clickRef(287.0, if (epic) 2235.0 else 1690.0, "daily : Recrutement $nom : clic Recruter une fois (gratuit) n°$dailyBtn")
             } else if (dailyStep == 0 && dailyBtn < 1 && (dailyActAt == 0L || now - dailyActAt < 2_500L)) {
                 // bouton pas (encore) vert : l'écran finit de s'afficher, on le relit pendant 2,5 s avant de conclure
                 if (dailyActAt == 0L) dailyActAt = now
@@ -2309,7 +2316,7 @@ class BotService : Service() {
         val seen = listOf("conqu", "héros", "heros", "magasin", "alliance", "monde").count { it in bar }
         if (seen >= 2) {
             dailyIdleAt = now
-            if (dailyStep >= 1) dailyTaskDone("Recruter des Héros : Avancé")
+            if (dailyStep >= 1) dailyTaskDone("Recruter des Héros : ${if (epic) "Épique" else "Avancé"}")
             return
         }
         // autre écran après un recrutement : animation du héros, on touche en haut de l'écran
