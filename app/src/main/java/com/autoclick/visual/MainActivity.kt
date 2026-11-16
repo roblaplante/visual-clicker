@@ -681,7 +681,29 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Journal (200 dernières lignes)")
             .setMessage(text)
             .setPositiveButton("Fermer", null)
+            .setNeutralButton("Exporter") { _, _ -> exportLog() }
             .show()
+    }
+
+    /** Partage le journal complet (fichier texte) : messagerie, mail, Drive… */
+    private fun exportLog() {
+        try {
+            val f = File(filesDir, "journal.txt")
+            if (!f.exists()) { Toast.makeText(this, "Journal vide", Toast.LENGTH_SHORT).show(); return }
+            val dir = File(cacheDir, "export").also { it.mkdirs() }
+            val out = File(dir, "journal_visual_clicker.txt")
+            f.copyTo(out, overwrite = true)
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", out)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Journal Visual Clicker")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Exporter le journal"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Export impossible : ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun start(mode: String) {

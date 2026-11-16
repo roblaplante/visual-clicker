@@ -2280,7 +2280,12 @@ class BotService : Service() {
         }
         // écran du recrutement (ligne « Prochain gratuit » de l'Épique, toujours présente)
         val recruit = ocrRef(rgb, 40, 2110, 560, 2165, true)
-        if ("prochain" in recruit || "gratuit" in recruit) {
+        // repère de secours sans OCR : les 3 gros boutons orange (Recruter 10 fois ×2, Épique ×1) ou le bouton vert
+        val orangeLo = Scalar(10.0, 150.0, 180.0)
+        val orangeHi = Scalar(25.0, 255.0, 255.0)
+        val orangeBtns = listOf(Rect(590, 1640, 410, 95), Rect(70, 2180, 430, 110), Rect(590, 2180, 410, 110))
+            .count { colorRect(rgb, it.x, it.y, it.x + it.width, it.y + it.height, orangeLo, orangeHi) >= 0.4 }
+        if ("prochain" in recruit || "gratuit" in recruit || orangeBtns >= 2) {
             dailyIdleAt = now
             // bouton vert « Recruter une fois Gratuit » : on mesure tout le bouton (le texte blanc au centre fausse un petit point)
             val green = colorRect(rgb, 90, 1640, 490, 1735, Scalar(50.0, 90.0, 100.0), Scalar(90.0, 255.0, 255.0))
