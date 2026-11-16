@@ -3284,12 +3284,15 @@ class BotService : Service() {
     private var bqLeft = 0
     private var bqRight = 0
     private var bqVisits = 0
+    private var bqHebdoStep = 0 // Offre Hebdo : 0 = bouton vert « Gratuit », 1 = cristal bleu de la barre de progression, 2 = fait
+    private var bqBarSwipes = 0
     private var bqCurSig: DoubleArray? = null
     private val bqIgnore = ArrayList<DoubleArray>()
     private val bqStuck = HashSet<Int>()
     private val bqBtnClicks = HashMap<Int, Int>()
 
     private fun resetBq(now: Long) {
+        bqHebdoStep = 0; bqBarSwipes = 0
         bqStartAt = now
         bqWaitUntil = now + 1800L
         bqPageKey = -1
@@ -3531,6 +3534,15 @@ class BotService : Service() {
         return null
     }
 
+    /** Fait coulisser la barre d'onglets du haut (y ≈ 300) : vers la droite = on voit les onglets de gauche. Part de x = 350 (hors de nos boutons). */
+    private fun bqSwipeBar(rgb: Mat, toRight: Boolean, dist: Int) {
+        lastClick = SystemClock.uptimeMillis()
+        val sc = rgb.cols() / 1080.0
+        val x0 = if (toRight) 350 else 950
+        val x1 = if (toRight) 350 + dist else 950 - dist
+        ClickAccessibilityService.instance?.swipe((x0 * sc).toFloat(), (300 * sc).toFloat(), (x1.coerceIn(20, 1060) * sc).toFloat(), (300 * sc).toFloat(), 700)
+    }
+
     private fun bqExit(msg: String, now: Long) {
         lastClick = now
         backArrow()
@@ -3588,6 +3600,27 @@ class BotService : Service() {
             selDot = false
         }
         if (selDot) {
+            // 0. Offre Hebdo (une fois par semaine) : bouton vert « Gratuit » à droite, puis cristal bleu de la barre de progression à gauche
+            if (bqHebdoStep < 2 && bqSwipes == 0) {
+                val head = ocrRef(rgb, 40, 385, 700, 470) + " " + ocrRefWhite(rgb, 40, 385, 700, 470)
+                if ("hebdo" in head || "hebd" in head) {
+                    if (bqHebdoStep == 0) {
+                        val g = colorRect(rgb, 745, 1145, 950, 1235, Scalar(50.0, 90.0, 100.0), Scalar(90.0, 255.0, 255.0))
+                        bqHebdoStep = 1
+                        if (g >= 0.4) {
+                            clickRef(845.0, 1190.0, "daily : Boutiques : Offre Hebdo : bouton vert « Gratuit »")
+                            bqWaitUntil = now + 2000L
+                        } else {
+                            log("daily : Boutiques : Offre Hebdo : pas de bouton vert (déjà pris), on passe au cristal bleu")
+                        }
+                        return
+                    }
+                    bqHebdoStep = 2
+                    clickRef(237.0, 718.0, "daily : Boutiques : Offre Hebdo : cristal bleu de la barre de progression")
+                    bqWaitUntil = now + 2000L
+                    return
+                }
+            }
             // 1. mini coffre (en haut de page seulement)
             if (bqSwipes == 0 && bqChestTries < 3) {
                 val c = bqChest(rgb)
@@ -3646,6 +3679,14 @@ class BotService : Service() {
             val sg = bqTabSig(rgb, maxOf(30, x - 90))
             sg == null || bqIgnore.none { bqSameSig(it, sg) }
         }
+        if (cand != null && maxOf(30, cand - 90) < 290 && bqBarSwipes < 6) {
+            // l'onglet est sous nos boutons ☰ ▶ (en haut à gauche) : on fait coulisser la barre d'onglets vers la droite
+            bqBarSwipes++
+            bqSwipeBar(rgb, true, 330)
+            log("daily : Boutiques : onglet à point rouge sous nos boutons, la barre d'onglets coulisse ($bqBarSwipes)")
+            bqWaitUntil = now + 1500L
+            return
+        }
         if (cand != null && bqVisits < 14) {
             bqVisits++
             bqCurSig = bqTabSig(rgb, maxOf(30, cand - 90))
@@ -3654,16 +3695,19 @@ class BotService : Service() {
             return
         }
         // Pastilles « ! » : onglets cachés avec un point rouge
-        if (redRect(rgb, 985, 250, 1055, 300) >= 0.2 && bqRight < 3) {
+        // (on ne touche pas la pastille : à gauche elle est sous nos boutons ; on fait coulisser la barre à la place)
+        if (redRect(rgb, 985, 250, 1055, 300) >= 0.2 && bqRight < 4) {
             bqRight++
-            clickRef(1018.0, 275.0, "daily : Boutiques : pastille « ! » à droite ($bqRight)")
-            bqWaitUntil = now + 1300L
+            bqSwipeBar(rgb, false, 450)
+            log("daily : Boutiques : pastille « ! » à droite, la barre d'onglets coulisse vers la gauche ($bqRight)")
+            bqWaitUntil = now + 1500L
             return
         }
-        if (redRect(rgb, 25, 250, 100, 300) >= 0.2 && bqLeft < 3) {
+        if (redRect(rgb, 25, 250, 100, 300) >= 0.2 && bqLeft < 4) {
             bqLeft++
-            clickRef(60.0, 275.0, "daily : Boutiques : pastille « ! » à gauche ($bqLeft)")
-            bqWaitUntil = now + 1300L
+            bqSwipeBar(rgb, true, 450)
+            log("daily : Boutiques : pastille « ! » à gauche, la barre d'onglets coulisse vers la droite ($bqLeft)")
+            bqWaitUntil = now + 1500L
             return
         }
         bqExit("plus de point rouge, sortie (flèche bleue)", now)
