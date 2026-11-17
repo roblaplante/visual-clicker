@@ -116,6 +116,7 @@ class BotService : Service() {
     private var statSeen = 0
     private var pinMemoryMs = 20 * 60_000L
     private class PinSeen(val x: Double, val y: Double, val t: Long)
+    private var pinClickAt = 0L // dernier clic sur un pin : on laisse le temps au flou et à la fenêtre beige de s'afficher
     private val pinsSeen = mutableListOf<PinSeen>() // pins déjà lancés : on ne les reclique pas tout de suite
     // Décalage du clic (en px d'un écran de 1080 de large) par rapport au centre de l'image reconnue :
     // sur « Victoire ! » on touche en dessous de la bannière (« Appuie n'importe où pour quitter »).
@@ -759,9 +760,11 @@ class BotService : Service() {
             }
             return
         }
+        if (now - pinClickAt < 4_500L) return // un pin vient d'être touché : flou, puis fenêtre beige ; un second toucher la fermerait
         if (!enoughMeat(meat)) return
         lastClick = now
-        pinsSeen.removeAll { now - it.t > pinMemoryMs }
+        pinClickAt = now
+        pinsSeen.removeAll { now - it.t > maxOf(pinMemoryMs, 90_000L) }
         pinsSeen.add(PinSeen(pin.first.toDouble(), pin.second.toDouble(), now))
         ClickAccessibilityService.instance?.click(pin.first, pin.second)
         log("clic pin en (%d, %d)".format(pin.first.toInt(), pin.second.toInt()))
@@ -977,7 +980,7 @@ class BotService : Service() {
                     val fx = (sx + spw / 2) / SCALE
                     val fy = (y + 0.4 * h) / SCALE
                     val tnow = SystemClock.uptimeMillis()
-                    if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
+                    if (pinsSeen.any { tnow - it.t < maxOf(pinMemoryMs, 90_000L) && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
                         statSeen++
                         continue
                     }
@@ -1016,7 +1019,7 @@ class BotService : Service() {
                 val fx = px / SCALE
                 val fy = cyc / SCALE
                 val tnow = SystemClock.uptimeMillis()
-                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
+                if (pinsSeen.any { tnow - it.t < maxOf(pinMemoryMs, 90_000L) && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
                     statSeen++
                     continue
                 }
