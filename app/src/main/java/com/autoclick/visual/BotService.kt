@@ -111,6 +111,8 @@ class BotService : Service() {
     private var statChecks = 0
     private var idleMs = 30_000L
     private var lastIdleLog = 0L
+    private var emptySince = 0L // début de la période où la carte des pins est vide (0 pin vu, coché ou lancé)
+    private var emptyLast = 0L
     private var statCand = 0
     private var statDone = 0
     private var statSeen = 0
@@ -754,12 +756,24 @@ class BotService : Service() {
             }
         }
         if (pin == null) {
+            if (statCand == 0 && statDone == 0 && statSeen == 0) {
+                // Carte vide : on confirme sur 10 s d'affilée (un flou de transition donne aussi 0 pin) avant d'arrêter.
+                if (emptySince == 0L || now - emptyLast > 4_000L) emptySince = now
+                emptyLast = now
+                if (now - emptySince >= 10_000L) {
+                    emptySince = 0L
+                    log("carte des pins : 0 pins vus, 0 cochés, 0 déjà lancés : missions de renseignements terminées, arrêt")
+                    pauseBot("Missions de renseignements terminées")
+                    return
+                }
+            } else emptySince = 0L
             if (now - lastIdleLog > 20_000) {
                 lastIdleLog = now
                 log("carte des pins : $statCand pins vus, $statDone cochés, $statSeen déjà lancés : rien à cliquer")
             }
             return
         }
+        emptySince = 0L
         if (now - pinClickAt < 4_500L) return // un pin vient d'être touché : flou, puis fenêtre beige ; un second toucher la fermerait
         if (!enoughMeat(meat)) return
         lastClick = now
