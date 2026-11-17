@@ -96,6 +96,7 @@ class BotService : Service() {
     private var panelHeader: Mat? = null
     private var popupTitle: Mat? = null // fenêtre « File de Marche » : plus aucune marche libre
     private var popupX: Mat? = null
+    private var goldTpl: Mat? = null // tête dorée (pin doré à tête d'ogre) : se reconnaît par son dessin, pas par la couleur (les blocs d'or de la carte sont dorés aussi)
     private var hexTpl: Mat? = null // pin hexagonal du boss (tête de roi) : à ne jamais attaquer
     private var noMarchUntil = 0L
     private var farmBackPending = false
@@ -378,6 +379,7 @@ class BotService : Service() {
         popupTitle = loadAsset("file_marche_titre.png")
         popupX = loadAsset("file_marche_x.png")
         hexTpl = loadAsset("hexagone_boss.png")
+        goldTpl = loadAsset("gold_head.png")
     }
 
     /**
@@ -920,6 +922,7 @@ class BotService : Service() {
             hexX = hmm.maxLoc.x + ht.cols() / 2.0
             hexY = hmm.maxLoc.y + ht.rows() / 2.0
         }
+        val goldSingles = ArrayList<DoubleArray>()
         for ((ri, range) in pinRanges.withIndex()) {
             val lo = range.first
             val hi = range.second
@@ -939,13 +942,14 @@ class BotService : Service() {
                 val a = stats.get(i, Imgproc.CC_STAT_AREA)[0]
                 // Le badge orange du personnage (en haut à gauche, toujours au même endroit) n'est pas un pin.
                 if (x + w / 2.0 < 0.2 * sw && y + h / 2.0 > 0.222 * sw && y + h / 2.0 < 0.5 * sw) continue
+                if (ri == 2 && (x <= 2 || x + w >= sw - 2)) continue // bloc d'or de la carte coupé par le bord de l'écran
                 if (h < 0.11 * sw || h > 0.185 * sw) continue // le pin hexagonal (tête de roi) est bien plus haut
                 if (ri == 2 && hexX >= 0 && hexX >= x && hexX <= x + w && hexY >= y && hexY <= y + h) continue // c'est le boss
                 val pw = 0.099 * sw // largeur d'un pin
                 val subs = ArrayList<DoubleArray>() // (x gauche, largeur) de chaque pin du bloc
                 if (w >= 0.085 * sw && w <= 0.125 * sw && h / w >= 1.1 && h / w <= 1.8 && a <= 0.0105 * sw * sw) {
                     subs.add(doubleArrayOf(x, w))
-                } else if (w > 0.125 * sw && w <= 0.4 * sw && h / w < 1.05) {
+                } else if (ri != 2 && w > 0.125 * sw && w <= 0.4 * sw && h / w < 1.05) { // (or : un bloc large est un amas d'or de la carte, jamais des pins)
                     // Plusieurs pins de même couleur qui se touchent forment un seul bloc large : on le découpe,
                     // sauf si une coche verte s'y trouve (pin terminé : « Récupérer Tout » le fera disparaître).
                     val inside = checks.any {
@@ -960,6 +964,7 @@ class BotService : Service() {
                 for (sub in subs) {
                     val sx = sub[0]
                     val spw = sub[1]
+                    if (ri == 2) goldSingles.add(doubleArrayOf(sx + spw / 2, y + 0.4 * h))
                     statCand++
                     visible.add(doubleArrayOf((sx + spw / 2) / SCALE, (y + 0.4 * h) / SCALE))
                     val done = checks.any {
@@ -985,6 +990,39 @@ class BotService : Service() {
             mask.release(); labels.release(); stats.release(); cents.release()
         }
         hsv.release(); k5.release(); k3.release()
+        // Têtes dorées : reconnues par leur dessin (même collées à un bloc d'or, que la couleur ne sépare pas)
+        val gt = goldTpl
+        if (gt != null && gt.cols() <= screen.cols() && gt.rows() <= screen.rows()) {
+            val res = Mat()
+            Imgproc.matchTemplate(screen, gt, res, Imgproc.TM_CCOEFF_NORMED)
+            val spw = 0.099 * sw
+            for (peak in 0 until 6) {
+                val mm = Core.minMaxLoc(res)
+                if (mm.maxVal < 0.72) break
+                val px = mm.maxLoc.x + gt.cols() / 2.0
+                val py = mm.maxLoc.y + gt.rows() / 2.0
+                Imgproc.rectangle(res, Point(mm.maxLoc.x - gt.cols(), mm.maxLoc.y - gt.rows()), Point(mm.maxLoc.x + gt.cols(), mm.maxLoc.y + gt.rows()), Scalar(-1.0), -1)
+                if (goldSingles.any { abs(it[0] - px) < 0.5 * spw && abs(it[1] - py) < 0.8 * spw }) continue // déjà vue par la couleur
+                val top = py - 0.53 * spw
+                val sx = px - spw / 2
+                statCand++
+                val cyc = py + 0.1 * spw
+                visible.add(doubleArrayOf(px / SCALE, cyc / SCALE))
+                val done = checks.any {
+                    abs(it[0] - (sx + 0.81 * spw)) < 0.35 * spw && abs(it[1] - (top + 0.23 * spw)) < 0.35 * spw && it[2] >= 0.004 * spw * spw
+                }
+                if (done) { statDone++; continue }
+                val fx = px / SCALE
+                val fy = cyc / SCALE
+                val tnow = SystemClock.uptimeMillis()
+                if (pinsSeen.any { tnow - it.t < pinMemoryMs && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
+                    statSeen++
+                    continue
+                }
+                if (cyc < bestY) { bestY = cyc; bestX = px }
+            }
+            res.release()
+        }
         // Un pin lancé qui a disparu (récolté) ne doit pas masquer un autre pin apparu près de lui.
         if (visible.isNotEmpty()) {
             val tn = SystemClock.uptimeMillis()
@@ -5299,6 +5337,7 @@ class BotService : Service() {
         popupTitle?.release()
         popupX?.release()
         hexTpl?.release()
+        goldTpl?.release()
         farm.values.forEach { it.release() }
         farm.clear()
         gates.forEach { it.release() }
