@@ -3538,9 +3538,9 @@ class BotService : Service() {
     private fun bqSwipeBar(rgb: Mat, toRight: Boolean, dist: Int) {
         lastClick = SystemClock.uptimeMillis()
         val sc = rgb.cols() / 1080.0
-        val x0 = if (toRight) 350 else 950
-        val x1 = if (toRight) 350 + dist else 950 - dist
-        ClickAccessibilityService.instance?.swipe((x0 * sc).toFloat(), (300 * sc).toFloat(), (x1.coerceIn(20, 1060) * sc).toFloat(), (300 * sc).toFloat(), 700)
+        val x0 = if (toRight) 400 else 800
+        val x1 = if (toRight) 400 + dist else 800 - dist
+        ClickAccessibilityService.instance?.swipe((x0 * sc).toFloat(), (300 * sc).toFloat(), (x1.coerceIn(20, 1060) * sc).toFloat(), (300 * sc).toFloat(), 300)
     }
 
     private fun bqExit(msg: String, now: Long) {
@@ -3696,16 +3696,21 @@ class BotService : Service() {
         }
         // Pastilles « ! » : onglets cachés avec un point rouge
         // (on ne touche pas la pastille : à gauche elle est sous nos boutons ; on fait coulisser la barre à la place)
-        if (redRect(rgb, 985, 250, 1055, 300) >= 0.2 && bqRight < 4) {
+        if (redRect(rgb, 985, 250, 1055, 300) >= 0.2 && bqRight < 5) {
             bqRight++
-            bqSwipeBar(rgb, false, 450)
-            log("daily : Boutiques : pastille « ! » à droite, la barre d'onglets coulisse vers la gauche ($bqRight)")
+            if (bqRight % 2 == 1) {
+                // toucher l'onglet du bord droit : le jeu le recentre et les onglets suivants apparaissent (méthode qui avait marché)
+                clickRef(1018.0, 300.0, "daily : Boutiques : pastille « ! » à droite, on touche l'onglet du bord ($bqRight)")
+            } else {
+                bqSwipeBar(rgb, false, 600)
+                log("daily : Boutiques : pastille « ! » à droite, la barre d'onglets coulisse vers la gauche ($bqRight)")
+            }
             bqWaitUntil = now + 1500L
             return
         }
         if (redRect(rgb, 25, 250, 100, 300) >= 0.2 && bqLeft < 4) {
             bqLeft++
-            bqSwipeBar(rgb, true, 450)
+            bqSwipeBar(rgb, true, 600)
             log("daily : Boutiques : pastille « ! » à gauche, la barre d'onglets coulisse vers la droite ($bqLeft)")
             bqWaitUntil = now + 1500L
             return
