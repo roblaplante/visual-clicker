@@ -764,7 +764,7 @@ class BotService : Service() {
         if (!enoughMeat(meat)) return
         lastClick = now
         pinClickAt = now
-        pinsSeen.removeAll { now - it.t > maxOf(pinMemoryMs, 90_000L) }
+        pinsSeen.removeAll { now - it.t > maxOf(pinMemoryMs, 25_000L) }
         pinsSeen.add(PinSeen(pin.first.toDouble(), pin.second.toDouble(), now))
         ClickAccessibilityService.instance?.click(pin.first, pin.second)
         log("clic pin en (%d, %d)".format(pin.first.toInt(), pin.second.toInt()))
@@ -980,7 +980,7 @@ class BotService : Service() {
                     val fx = (sx + spw / 2) / SCALE
                     val fy = (y + 0.4 * h) / SCALE
                     val tnow = SystemClock.uptimeMillis()
-                    if (pinsSeen.any { tnow - it.t < maxOf(pinMemoryMs, 90_000L) && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
+                    if (pinsSeen.any { tnow - it.t < maxOf(pinMemoryMs, 25_000L) && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
                         statSeen++
                         continue
                     }
@@ -1019,7 +1019,7 @@ class BotService : Service() {
                 val fx = px / SCALE
                 val fy = cyc / SCALE
                 val tnow = SystemClock.uptimeMillis()
-                if (pinsSeen.any { tnow - it.t < maxOf(pinMemoryMs, 90_000L) && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
+                if (pinsSeen.any { tnow - it.t < maxOf(pinMemoryMs, 25_000L) && abs(it.x - fx) < 0.3 * spw / SCALE && abs(it.y - fy) < 0.3 * spw / SCALE }) {
                     statSeen++
                     continue
                 }
