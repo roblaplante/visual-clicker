@@ -513,6 +513,15 @@ class MainActivity : AppCompatActivity() {
         val root = newRoot()
         root.addView(backToMenuButton())
         root.addView(button("Démarrer") { start("epreuves") })
+        root.addView(label("Flèche Éclatante et Colisée : coche = équipe type (sous-menu), décoché = premiers héros de la liste :"))
+        val teamRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        epTeamTypeCheck = CheckBox(this).apply { isChecked = sp.getBoolean("epTeamType", true) }
+        teamRow.addView(epTeamTypeCheck)
+        teamRow.addView(button("Équipe type") {
+            saveEpreuves()
+            showEpTeam()
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(teamRow)
         root.addView(TextView(this).apply { text = "Épreuves Mystiques"; textSize = 22f })
         root.addView(
             label(
@@ -536,15 +545,6 @@ class MainActivity : AppCompatActivity() {
             }
             root.addView(row)
         }
-        root.addView(label("Flèche Éclatante (dimanche) et Colisée (lundi, mardi) : coche = on utilise l'équipe type (héros cochés dans le sous-menu), décoché = on prend les premiers héros de la liste (les plus forts du bon type) :"))
-        val teamRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
-        epTeamTypeCheck = CheckBox(this).apply { isChecked = sp.getBoolean("epTeamType", true) }
-        teamRow.addView(epTeamTypeCheck)
-        teamRow.addView(button("Équipe type") {
-            saveEpreuves()
-            showEpTeam()
-        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(teamRow)
         root.addView(label("Ouvrez le jeu sur la ville, puis démarrez."))
     }
 
