@@ -104,6 +104,9 @@ class MainActivity : AppCompatActivity() {
                 } else if (screen == 1) {
                     saveSettings()
                     showIntelChoice()
+                } else if (screen == 10) {
+                    saveSettings()
+                    showEpreuves()
                 } else if (screen != 0) {
                     saveSettings()
                     showMenu()
