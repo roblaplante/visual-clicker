@@ -3262,7 +3262,7 @@ class BotService : Service() {
 
     /** Fin normale du Marchand nomade : si « Magasin mystère » est coché, on passe par l'onglet Mystère avant de sortir. */
     private fun shopEnd(msg: String) {
-        if (!getSharedPreferences("cfg", MODE_PRIVATE).getBoolean("mysteryShop", false)) { shopFinish(msg); return }
+        if (mode != "marchand" || !getSharedPreferences("cfg", MODE_PRIVATE).getBoolean("mysteryShop", false)) { shopFinish(msg); return }
         val now = SystemClock.uptimeMillis()
         log("daily : Marchand nomade : $msg ; magasin mystère coché : on regarde l'onglet Mystère")
         dailyStep = 6

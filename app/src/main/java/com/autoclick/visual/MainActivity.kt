@@ -275,6 +275,7 @@ class MainActivity : AppCompatActivity() {
             saveSettings()
             showIntelChoice()
         })
+        root.addView(button("Démarrer") { start("intel") })
         root.addView(TextView(this).apply { text = "Missions de renseignements : ${sp.getInt("marchTotal", 5)} marches"; textSize = 22f })
 
         root.addView(button("(Facultatif) Ajouter une image à détecter en plus") { pickImage.launch("image/*") })
@@ -308,7 +309,6 @@ class MainActivity : AppCompatActivity() {
         harvestEdit = numberField("harvestMin", 5)
         root.addView(harvestEdit)
 
-        root.addView(button("Démarrer") { start("intel") })
     }
 
     // ---------- Farm ----------
@@ -350,6 +350,7 @@ class MainActivity : AppCompatActivity() {
             saveSettings()
             showFarmChoice()
         })
+        root.addView(button("Démarrer") { start("farm") })
         root.addView(TextView(this).apply { text = "Farm : $farmN marches"; textSize = 22f })
         root.addView(
             label(
@@ -389,7 +390,6 @@ class MainActivity : AppCompatActivity() {
 
         addCommonSettings(root, false)
 
-        root.addView(button("Démarrer") { start("farm") })
     }
 
     private fun farmCount(e: EditText) = (e.text.toString().toIntOrNull() ?: 0).coerceIn(0, 6)
@@ -412,6 +412,7 @@ class MainActivity : AppCompatActivity() {
         screen = 7
         val root = newRoot()
         root.addView(backToMenuButton())
+        root.addView(button("Démarrer") { start("daily") })
         root.addView(TextView(this).apply { text = "Daily"; textSize = 22f })
         root.addView(
             label(
@@ -440,7 +441,6 @@ class MainActivity : AppCompatActivity() {
         bonusToEdit = numberField("bonusTo", 9)
         root.addView(bonusToEdit)
         root.addView(label("Ouvrez le jeu sur la ville (ou la carte), menu de gauche fermé, puis démarrez."))
-        root.addView(button("Démarrer") { start("daily") })
     }
 
     // ---------- Marchand nomade (à la demande) ----------
@@ -449,6 +449,7 @@ class MainActivity : AppCompatActivity() {
         screen = 8
         val root = newRoot()
         root.addView(backToMenuButton())
+        root.addView(button("Démarrer") { start("marchand") })
         root.addView(TextView(this).apply { text = "Marchand nomade"; textSize = 22f })
         root.addView(
             label(
@@ -472,14 +473,13 @@ class MainActivity : AppCompatActivity() {
         root.addView(mysteryCheck)
         root.addView(
             label(
-                "Si cochée : une fois le Marchand nomade terminé (ici comme dans le Daily), l'appli regarde si l'onglet " +
+                "Si cochée : une fois le Marchand nomade terminé, l'appli regarde si l'onglet " +
                     "« Mystère » du bas a un point rouge. Si oui, elle l'ouvre, touche chaque case verte « Gratuit », puis " +
                     "touche « Actualisation Gratuite » (5 fois au plus) tant que ce bouton est vert. Elle ne touche jamais " +
                     "le bouton orange payant ni une case payante, puis sort par la flèche bleue."
             )
         )
         root.addView(label("Ouvrez le jeu sur la ville (ou directement dans le magasin), puis démarrez."))
-        root.addView(button("Démarrer") { start("marchand") })
     }
 
     // ---------- Épreuves Mystiques (à la demande) ----------
@@ -512,6 +512,7 @@ class MainActivity : AppCompatActivity() {
         epEdits.clear()
         val root = newRoot()
         root.addView(backToMenuButton())
+        root.addView(button("Démarrer") { start("epreuves") })
         root.addView(TextView(this).apply { text = "Épreuves Mystiques"; textSize = 22f })
         root.addView(
             label(
@@ -545,7 +546,6 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(teamRow)
         root.addView(label("Ouvrez le jeu sur la ville, puis démarrez."))
-        root.addView(button("Démarrer") { start("epreuves") })
     }
 
     private lateinit var epTeamTypeCheck: CheckBox
@@ -632,6 +632,7 @@ class MainActivity : AppCompatActivity() {
             saveSettings()
             showHuntChoice()
         })
+        root.addView(button("Démarrer") { start("hunt") })
         root.addView(TextView(this).apply { text = "Hunt : $huntN marches"; textSize = 22f })
         root.addView(
             label(
@@ -657,7 +658,6 @@ class MainActivity : AppCompatActivity() {
 
         addCommonSettings(root, false)
 
-        root.addView(button("Démarrer") { start("hunt") })
     }
 
     // ---------- Divers ----------
