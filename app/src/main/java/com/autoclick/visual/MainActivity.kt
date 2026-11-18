@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     // Farm
     private lateinit var grandCheck: CheckBox
     private lateinit var bonusCheck: CheckBox
+    private lateinit var mysteryCheck: CheckBox
     private lateinit var bonusFromEdit: EditText
     private lateinit var bonusToEdit: EditText
     private lateinit var painEdit: EditText
@@ -464,6 +465,19 @@ class MainActivity : AppCompatActivity() {
                     "le bouton ⏸ arrête tout à tout moment."
             )
         )
+        mysteryCheck = CheckBox(this).apply {
+            text = "Magasin mystère"
+            isChecked = sp.getBoolean("mysteryShop", false)
+        }
+        root.addView(mysteryCheck)
+        root.addView(
+            label(
+                "Si cochée : une fois le Marchand nomade terminé (ici comme dans le Daily), l'appli regarde si l'onglet " +
+                    "« Mystère » du bas a un point rouge. Si oui, elle l'ouvre, touche chaque case verte « Gratuit », puis " +
+                    "touche « Actualisation Gratuite » (5 fois au plus) tant que ce bouton est vert. Elle ne touche jamais " +
+                    "le bouton orange payant ni une case payante, puis sort par la flèche bleue."
+            )
+        )
         root.addView(label("Ouvrez le jeu sur la ville (ou directement dans le magasin), puis démarrez."))
         root.addView(button("Démarrer") { start("marchand") })
     }
@@ -681,6 +695,10 @@ class MainActivity : AppCompatActivity() {
         }
         if (screen == 10) {
             saveEpTeam()
+            return
+        }
+        if (screen == 8) {
+            sp.edit().putBoolean("mysteryShop", mysteryCheck.isChecked).apply()
             return
         }
         if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8) return

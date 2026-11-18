@@ -3083,6 +3083,7 @@ class BotService : Service() {
      * Gratuite » (bouton vert en haut à droite) et on recommence, jusqu'à ce que ce bouton devienne orange (payant).
      */
     private fun detectMarchand(rgb: Mat, now: Long) {
+        if (dailyStep == 6) { detectMysteryShop(rgb, now); return }
         if (now - dailyIdleAt > 10_000L) {
             log("daily : Marchand nomade abandonné (10 s sans écran reconnu)")
             lastClick = now
@@ -3208,7 +3209,7 @@ class BotService : Service() {
             val green = colorRect(rgb, 760, 440, 1030, 520, Scalar(40.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0))
             val orange = colorRect(rgb, 760, 440, 1030, 520, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0))
             if (orange >= 0.3 && green < 0.1) {
-                shopFinish("6 cases bloquées et bouton d'actualisation orange (payant) : fin")
+                shopEnd("6 cases bloquées et bouton d'actualisation orange (payant) : fin")
             } else if (green >= 0.25) {
                 if (!shopCheckDone) {
                     // Petit contrôle avant d'actualiser : on efface les cases « ignorées » et on fait confirmer par la
@@ -3222,7 +3223,7 @@ class BotService : Service() {
                     log("daily : Marchand : contrôle avant actualisation (${reads.joinToString(" ") { shopDesc(it) }}), cases à confirmer par la fenêtre : ${shopVerify.map { it + 1 }}")
                     return
                 }
-                if (dailyBtn >= 40) { shopFinish("40 actualisations atteintes"); return }
+                if (dailyBtn >= 40) { shopEnd("40 actualisations atteintes"); return }
                 dailyBtn++
                 shopSig = ""
                 shopSkipSig = Array(6) { "" }
@@ -3240,6 +3241,113 @@ class BotService : Service() {
         if (shopUnknownAt == 0L) shopUnknownAt = now
         else if (now - shopUnknownAt > 8_000L) {
             shopFinish("cases illisibles (${reads.joinToString(" ") { shopDesc(it) }}) : arrêt sans actualiser")
+        }
+    }
+
+    // ---------- Magasin mystère (option du menu « Marchand nomade », après la fin du Marchand nomade) ----------
+
+    private var myState = 0
+    private var myRefresh = 0
+    private var myBuys = 0
+    private var myStartAt = 0L
+    private var myWaitUntil = 0L
+    private var mySig = ""
+    private var myUnknownAt = 0L
+    private var myTabTries = 0
+    private var myDotSince = 0L
+    private val myClicks = HashMap<Int, Int>()
+    private val mySkip = HashSet<Int>()
+    private val myTops = intArrayOf(735, 1168, 1600)   // haut des cartes (référence 1080 px)
+    private val myCy = intArrayOf(1070, 1503, 1935)    // centre de la bande « Gratuit »
+
+    /** Fin normale du Marchand nomade : si « Magasin mystère » est coché, on passe par l'onglet Mystère avant de sortir. */
+    private fun shopEnd(msg: String) {
+        if (!getSharedPreferences("cfg", MODE_PRIVATE).getBoolean("mysteryShop", false)) { shopFinish(msg); return }
+        val now = SystemClock.uptimeMillis()
+        log("daily : Marchand nomade : $msg ; magasin mystère coché : on regarde l'onglet Mystère")
+        dailyStep = 6
+        myState = 0; myRefresh = 0; myBuys = 0; myStartAt = now; myWaitUntil = 0L; mySig = ""
+        myUnknownAt = 0L; myTabTries = 0; myDotSince = 0L
+        myClicks.clear(); mySkip.clear()
+        dailyIdleAt = now
+    }
+
+    private fun redDot(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Double =
+        maxOf(
+            colorRect(rgb, x0, y0, x1, y1, Scalar(0.0, 170.0, 180.0), Scalar(10.0, 255.0, 255.0)),
+            colorRect(rgb, x0, y0, x1, y1, Scalar(170.0, 170.0, 180.0), Scalar(179.0, 255.0, 255.0))
+        )
+
+    /**
+     * Onglet Mystère : point rouge sur l'onglet > ouverture > cartes vertes « Gratuit » touchées au centre de leur bande >
+     * « Actualisation Gratuite » (bouton vert, 5 fois au plus) > sortie dès que plus rien de gratuit (bouton orange ou limite).
+     * Jamais de case payante (prix en pièces mystère) ni de bouton orange.
+     */
+    private fun detectMysteryShop(rgb: Mat, now: Long) {
+        dailyIdleAt = now
+        if (now - myStartAt > 120_000L) { shopFinish("magasin mystère : plus de 2 minutes, arrêt par sécurité"); return }
+        if (now < myWaitUntil) return
+        when (myState) {
+            0 -> {
+                // point rouge en haut à droite de l'onglet « Mystère » (deuxième onglet du bas)
+                val red = redDot(rgb, 555, 2215, 615, 2265)
+                if (red < 0.04) {
+                    if (myDotSince == 0L) myDotSince = now
+                    if (now - myDotSince > 1_500L) shopFinish("magasin mystère : pas de point rouge sur l'onglet Mystère, sortie (rouge ${"%.2f".format(red)})")
+                    return
+                }
+                myState = 1
+                myWaitUntil = now + 1_500L
+                clickRef(455.0, 2275.0, "marchand : point rouge sur l'onglet Mystère, ouverture")
+            }
+            1 -> {
+                // l'onglet sélectionné est clair (crème) : on attend de le voir ainsi
+                val cream = colorRect(rgb, 320, 2290, 590, 2330, Scalar(10.0, 10.0, 225.0), Scalar(30.0, 90.0, 255.0))
+                if (cream >= 0.5) { myState = 2; mySig = ""; return }
+                if (++myTabTries > 4) { shopFinish("magasin mystère : l'onglet ne s'ouvre pas, sortie"); return }
+                myWaitUntil = now + 1_200L
+                clickRef(455.0, 2275.0, "marchand : onglet Mystère (nouvel essai $myTabTries)")
+            }
+            else -> {
+                val frees = (0..8).filter { i ->
+                    val x0 = shopCols[i % 3]
+                    val y0 = myTops[i / 3]
+                    colorRect(rgb, x0 + 10, y0 + 40, x0 + 285, y0 + 370, Scalar(50.0, 30.0, 100.0), Scalar(80.0, 255.0, 255.0)) >= 0.2
+                }
+                val green = colorRect(rgb, 760, 510, 1030, 600, Scalar(40.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0))
+                val orange = colorRect(rgb, 760, 510, 1030, 600, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0))
+                val sig = "${frees.joinToString(",")}|${(green * 10).toInt()}|${(orange * 10).toInt()}"
+                if (sig != mySig) { mySig = sig; return } // deux lectures identiques (fin des animations)
+                val free = frees.firstOrNull { it !in mySkip }
+                if (free != null) {
+                    myUnknownAt = 0L
+                    val n = (myClicks[free] ?: 0) + 1
+                    myClicks[free] = n
+                    if (n > 3) {
+                        mySkip.add(free)
+                        log("marchand : mystère : case ${free + 1} inchangée après 3 touches, ignorée")
+                        return
+                    }
+                    if (++myBuys > 40) { shopFinish("magasin mystère : 40 achats atteints, arrêt par sécurité"); return }
+                    mySig = ""
+                    myWaitUntil = now + 1_200L
+                    clickRef(shopCx[free % 3].toDouble(), myCy[free / 3].toDouble(), "marchand : mystère : case ${free + 1} « Gratuit » (n° $myBuys)")
+                    return
+                }
+                if (green >= 0.25 && orange < 0.1) {
+                    myUnknownAt = 0L
+                    if (myRefresh >= 5) { shopFinish("magasin mystère : 5 actualisations faites, plus rien de gratuit : fin"); return }
+                    myRefresh++
+                    mySkip.clear(); myClicks.clear()
+                    mySig = ""
+                    myWaitUntil = now + 2_000L
+                    clickRef(895.0, 552.0, "marchand : mystère : plus de case gratuite, actualisation gratuite n° $myRefresh")
+                    return
+                }
+                if (orange >= 0.3 && green < 0.1) { shopFinish("magasin mystère : plus de case gratuite, bouton d'actualisation orange (payant) : fin"); return }
+                if (myUnknownAt == 0L) myUnknownAt = now
+                else if (now - myUnknownAt > 8_000L) shopFinish("magasin mystère : écran illisible (vert ${"%.2f".format(green)}, orange ${"%.2f".format(orange)}), sortie")
+            }
         }
     }
 
@@ -4141,7 +4249,7 @@ class BotService : Service() {
         val dlg = colorRect(rgb, 330, 1435, 750, 1535, Scalar(8.0, 150.0, 180.0), Scalar(25.0, 255.0, 255.0)) >= 0.35
         var tab = ocrRef(rgb, 0, 2215, 300, 2335, true)
         if ("march" !in tab && "nomade" !in tab) tab = ocrRef(rgb, 0, 2215, 300, 2335, false)
-        val inShop = dlg || "march" in tab || "nomade" in tab
+        val inShop = dlg || "march" in tab || "nomade" in tab || dailyStep == 6
         if (inShop) {
             soloUnknownAt = 0L
             soloBackTries = 0
