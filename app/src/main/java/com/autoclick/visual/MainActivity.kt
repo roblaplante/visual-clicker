@@ -493,7 +493,6 @@ class MainActivity : AppCompatActivity() {
     private fun showEpreuves() {
         screen = 9
         epEdits.clear()
-        epHeroChecks.clear()
         val root = newRoot()
         root.addView(backToMenuButton())
         root.addView(TextView(this).apply { text = "Épreuves Mystiques"; textSize = 22f })
@@ -519,7 +518,32 @@ class MainActivity : AppCompatActivity() {
             }
             root.addView(row)
         }
-        root.addView(label("Héros des 3 équipes (Flèche Éclatante et Colisée). Case cochée = exactement ce héros (le bot s'arrête s'il ne le trouve pas). Case décochée = le premier héros de la liste (le plus fort du bon type) :"))
+        root.addView(label("Flèche Éclatante (dimanche) et Colisée (lundi, mardi) : coche = on utilise l'équipe type (héros cochés dans le sous-menu), décoché = on prend les premiers héros de la liste (les plus forts du bon type) :"))
+        val teamRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        epTeamTypeCheck = CheckBox(this).apply { isChecked = sp.getBoolean("epTeamType", true) }
+        teamRow.addView(epTeamTypeCheck)
+        teamRow.addView(button("Équipe type") {
+            saveEpreuves()
+            showEpTeam()
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(teamRow)
+        root.addView(label("Ouvrez le jeu sur la ville, puis démarrez."))
+        root.addView(button("Démarrer") { start("epreuves") })
+    }
+
+    private lateinit var epTeamTypeCheck: CheckBox
+
+    /** Sous-menu « Équipe type » : les 3 équipes de héros ; case cochée = exactement ce héros, décochée = le premier de la liste. */
+    private fun showEpTeam() {
+        screen = 10
+        epHeroChecks.clear()
+        val root = newRoot()
+        root.addView(button("◀ Épreuves Mystiques") {
+            saveEpTeam()
+            showEpreuves()
+        })
+        root.addView(TextView(this).apply { text = "Équipe type"; textSize = 22f })
+        root.addView(label("Case cochée = exactement ce héros (le bot s'arrête s'il ne le trouve pas). Case décochée = le premier héros de la liste (le plus fort du bon type). Ces choix ne servent que si la coche « Équipe type » du menu précédent est cochée :"))
         for (t in 0 until 3) {
             root.addView(label("Équipe ${t + 1}"))
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -542,14 +566,18 @@ class MainActivity : AppCompatActivity() {
             }
             root.addView(row)
         }
-        root.addView(label("Ouvrez le jeu sur la ville, puis démarrez."))
-        root.addView(button("Démarrer") { start("epreuves") })
+    }
+
+    private fun saveEpTeam() {
+        val e = sp.edit()
+        for ((key, cb) in epHeroChecks) e.putBoolean("epHeroExact_$key", cb.isChecked)
+        e.apply()
     }
 
     private fun saveEpreuves() {
         val e = sp.edit()
         e.putInt("epResetHour", (epResetEdit.text.toString().toIntOrNull() ?: 1).coerceIn(0, 23))
-        for ((key, cb) in epHeroChecks) e.putBoolean("epHeroExact_$key", cb.isChecked)
+        e.putBoolean("epTeamType", epTeamTypeCheck.isChecked)
         for ((g, grp) in epGroups.withIndex()) {
             val v = IntArray(3) { (epEdits[g * 3 + it].text.toString().toIntOrNull() ?: -1) }
             if (v.all { it in 0..100 } && v.sum() == 100) {
@@ -646,6 +674,10 @@ class MainActivity : AppCompatActivity() {
         }
         if (screen == 9) {
             saveEpreuves()
+            return
+        }
+        if (screen == 10) {
+            saveEpTeam()
             return
         }
         if (screen == 0 || screen == 3 || screen == 4 || screen == 6 || screen == 7 || screen == 8) return

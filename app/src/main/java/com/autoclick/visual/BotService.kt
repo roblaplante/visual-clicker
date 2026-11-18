@@ -4730,9 +4730,10 @@ class BotService : Service() {
         if (k != epSelK) { epSelK = k; epSelClicked = false; epSelSwipes = 0; epAssignTries = 0 }
         val key = epTeamHeroes[team][k]
         if (!epSelClicked) {
-            val exact = getSharedPreferences("cfg", MODE_PRIVATE).getBoolean("epHeroExact_$key", true)
+            val cfg = getSharedPreferences("cfg", MODE_PRIVATE)
+            val exact = cfg.getBoolean("epTeamType", true) && cfg.getBoolean("epHeroExact_$key", true)
             if (!exact) {
-                log("épreuves : équipe ${team + 1} : héros ${k + 1} : pas exact (menu), on prend le premier de la liste")
+                log("épreuves : équipe ${team + 1} : héros ${k + 1} : équipe type décochée ou héros non exact (menu), on prend le premier de la liste")
                 epSelClicked = true
             }
         }
