@@ -4240,7 +4240,7 @@ class BotService : Service() {
     private var epFights = 0
     private var epPassAt = 0L
     private var epVictoryAt = 0L
-    private var epCheckToggled = false
+    private var epCheckTries = 0
     private var epDeployAt = 0L
     private var epConfigClickAt = 0L
     private var epUnexpectedLogged = false
@@ -4251,7 +4251,7 @@ class BotService : Service() {
         epFinished = false; epClickedAt = 0L; epIdleAt = SystemClock.uptimeMillis(); epBackTries = 0; epListTries = 0; epTabAt = 0L
         epWaitUntil = 0L; epCurSquad = -1; epRatioDone.fill(false); epCleared.fill(false); epClearTries = 0; epDone.clear(); epCurIsland = null; epMapScanAt = 0L
         epMapOpen = emptyList(); epSelK = -1; epSelClicked = false; epSelSwipes = 0; epAssignTries = 0
-        epTauxFails = 0; epTauxStuck = 0; epLastVals = ""; epFights = 0; epPassAt = 0L; epVictoryAt = 0L; epCheckToggled = false
+        epTauxFails = 0; epTauxStuck = 0; epLastVals = ""; epFights = 0; epPassAt = 0L; epVictoryAt = 0L; epCheckTries = 0
         epDeployAt = 0L; epConfigClickAt = 0L; epUnexpectedLogged = false
     }
 
@@ -4401,12 +4401,16 @@ class BotService : Service() {
         val ribbon = ocrRef(rgb, 150, 740, 930, 850)
         if ("victoire" in ribbon) {
             epIdleAt = now
-            if (epVictoryAt == 0L) epVictoryAt = now
-            if (!epCheckToggled) {
-                epCheckToggled = true
-                if (colorRect(rgb, 262, 1690, 318, 1745, epGreenLo, epGreenHi) < 0.10) {
-                    clickRef(290.0, 1718.0, "épreuves : case « Défier Auto. La Prochaine Étape » cochée")
-                    epWaitUntil = now + 800L
+            if (epVictoryAt == 0L) { epVictoryAt = now; epCheckTries = 0 }
+            // L'écran de victoire s'anime à son apparition : on attend qu'il soit stable (bouton « Suivant » affiché depuis 1,5 s)
+            // avant de lire la case, sinon on la lit « vide » alors qu'elle est déjà cochée et on la décoche en cliquant.
+            // On se fie à l'état lu (vert = cochée) et non à un drapeau : une case déjà cochée n'est jamais retouchée.
+            if (epCheckTries < 2 && now - epVictoryAt >= 1_500L && colorRect(rgb, 570, 1500, 1000, 1590, epCyanLo, epCyanHi) >= 0.35) {
+                val green = colorRect(rgb, 262, 1690, 318, 1745, epGreenLo, epGreenHi)
+                if (green < 0.10) {
+                    epCheckTries++
+                    clickRef(290.0, 1718.0, "épreuves : case « Défier Auto. La Prochaine Étape » à cocher (essai $epCheckTries, vert ${"%.2f".format(green)})")
+                    epWaitUntil = now + 1_500L
                     return
                 }
             }
@@ -4419,7 +4423,6 @@ class BotService : Service() {
         epVictoryAt = 0L
         if ("faite" in ribbon) {
             epIdleAt = now
-            epCheckToggled = false
             if (colorRect(rgb, 570, 1710, 1000, 1800, epCyanLo, epCyanHi) >= 0.35) {
                 epFights++
                 if (epFights > 250) { epStop("plus de 250 combats, arrêt de sécurité"); return }
