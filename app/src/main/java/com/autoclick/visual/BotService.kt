@@ -1822,6 +1822,7 @@ class BotService : Service() {
                     dailyIdleAt = now
                     dailyStepAt = now
                     banqueTries = 0
+                    banqueTries2 = 0
                     banquePlus = 0
                     clickRef(65.0, 150.0, "daily : Banquet Gastronomique : plage horaire ($bonusFrom h-$bonusTo h), ouverture du profil")
                     return
@@ -4004,12 +4005,13 @@ class BotService : Service() {
     // ---------- Banquet Gastronomique (préambule du Daily, même plage horaire que le bonus de collecte) ----------
 
     private var banqueTries = 0
+    private var banqueTries2 = 0
     private var banquePlus = 0
 
     /**
      * Ville > avatar en haut à gauche > « Profil du Chef » > « + » à côté de l'endurance > fenêtre « Obtenir plus » :
-     * si le bouton vert « Récupérer » du Banquet Gastronomique (première ligne) est là, on le touche ; sinon (minuteur gris)
-     * rien > croix de la fenêtre > flèche bleue du profil > ville.
+     * si le bouton vert « Récupérer » du Banquet Gastronomique (première ligne) ou de l'Étreinte Réconfortante (deuxième)
+     * est là, on le touche (pas d'écran de récompense) ; sinon (minuteur gris) rien > croix de la fenêtre > flèche bleue du profil > ville.
      */
     private fun detectBanquet(rgb: Mat, now: Long) {
         if (now - dailyIdleAt > 10_000L) {
@@ -4035,8 +4037,16 @@ class BotService : Service() {
                     clickRef(868.0, 873.0, "daily : Banquet Gastronomique : Récupérer (essai $banqueTries)")
                     return
                 }
-                if (now - dailyStepAt < 2_000L) return // fenêtre qui s'anime / récompense qui s'inscrit : on relit
-                log("daily : Banquet Gastronomique : ${if (banqueTries > 0) "récupéré" else "rien à récupérer (minuteur gris)"}, fermeture")
+                // deuxième ligne : « Étreinte Réconfortante » (même bouton vert quand elle est prête)
+                val green2 = colorRect(rgb, 740, 1060, 1000, 1160, Scalar(40.0, 120.0, 120.0), Scalar(85.0, 255.0, 255.0))
+                if (green2 >= 0.4 && banqueTries2 < 2) {
+                    banqueTries2++
+                    dailyStepAt = now
+                    clickRef(868.0, 1108.0, "daily : Banquet Gastronomique : Étreinte Réconfortante, Récupérer (essai $banqueTries2)")
+                    return
+                }
+                if (now - dailyStepAt < 2_000L) return // fenêtre qui s'anime / bouton qui se grise : on relit
+                log("daily : Banquet Gastronomique : ${if (banqueTries + banqueTries2 > 0) "récupéré (banquet $banqueTries, étreinte $banqueTries2)" else "rien à récupérer (minuteurs gris)"}, fermeture")
                 dailyStep = 2
                 dailyStepAt = now
                 clickRef(1002.0, 467.0, "daily : Banquet Gastronomique : fermeture de la fenêtre (croix)")
@@ -4064,14 +4074,7 @@ class BotService : Service() {
                 dailyStepAt = now
                 clickRef(350.0, 2090.0, "daily : Banquet Gastronomique : clic sur le « + » de l'endurance")
             }
-            else -> {
-                // écran de récompense éventuel après « Récupérer »
-                val rw = ocrRef(rgb, 200, 2150, 880, 2240)
-                if ("appuie" in rw || "quitter" in rw) {
-                    dailyIdleAt = now
-                    tapRewards("daily : Banquet Gastronomique : récompense, appui n'importe où")
-                }
-            }
+            else -> {}
         }
     }
 
@@ -4093,6 +4096,7 @@ class BotService : Service() {
     }
     private var bonusAsk = 0
     private var bonusBarAt = 0L
+    private var bonusConfAt = 0L
 
     /** Corrélation de l'icône « chariot » (bonus de collecte actif) dans la rangée d'icônes à droite de la flèche, en haut à gauche. 1.0 si on ne peut pas mesurer. */
     private fun bonusIconScore(screen: Mat): Double {
@@ -4164,6 +4168,23 @@ class BotService : Service() {
         }
         val orangeLo = Scalar(10.0, 140.0, 190.0)
         val orangeHi = Scalar(32.0, 255.0, 255.0)
+        // 0) fenêtre « Confirmer » : « Activer un autre bonus de ce type remplacera ton bonus actuel. Activer ? »
+        //    Annuler (orange, à gauche) / Confirmer (turquoise, à droite) : on confirme.
+        if (colorRect(rgb, 575, 1365, 945, 1470, Scalar(80.0, 100.0, 150.0), Scalar(105.0, 255.0, 255.0)) >= 0.5 &&
+            colorRect(rgb, 140, 1365, 505, 1470, Scalar(5.0, 150.0, 190.0), Scalar(20.0, 255.0, 255.0)) >= 0.5 &&
+            colorRect(rgb, 100, 925, 950, 985, Scalar(10.0, 20.0, 150.0), Scalar(30.0, 90.0, 255.0)) >= 0.5
+        ) {
+            dailyIdleAt = now
+            if (bonusConfAt == 0L) bonusConfAt = now
+            val msg = ocrRef(rgb, 340, 1090, 950, 1260, true)
+            val known = "bonus" in msg || "remplac" in msg || "activer" in msg
+            if (!known && now - bonusConfAt < 3_000L) return // texte pas encore lisible : on relit
+            bonusConfAt = 0L
+            dailyActAt = now
+            clickRef(757.0, 1417.0, "daily : Bonus de collecte : fenêtre « Confirmer » (remplace le bonus actuel), Confirmer")
+            return
+        }
+        bonusConfAt = 0L
         // 1) fenêtre « Acheter » (confirmation) : gros bouton jaune au centre
         if (colorRect(rgb, 335, 1385, 745, 1485, orangeLo, orangeHi) >= 0.4) {
             dailyIdleAt = now
