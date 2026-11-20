@@ -1811,6 +1811,21 @@ class BotService : Service() {
                         return
                     }
                 }
+                // Banquet Gastronomique (Endurance du Chef) : même plage horaire que la visite forcée du bonus de collecte
+                if (cityVisible && (dailyAttempts["banquet"] ?: 0) < 2 && bonusForce && bonusWindowNow()) {
+                    dailyAttempts["banquet"] = (dailyAttempts["banquet"] ?: 0) + 1
+                    dailyState = "BANQUET"
+                    dailyStep = 0
+                    dailyBtn = 0
+                    dailyGrey = 0
+                    dailyActAt = now
+                    dailyIdleAt = now
+                    dailyStepAt = now
+                    banqueTries = 0
+                    banquePlus = 0
+                    clickRef(65.0, 150.0, "daily : Banquet Gastronomique : plage horaire ($bonusFrom h-$bonusTo h), ouverture du profil")
+                    return
+                }
                 if (cityVisible && (dailyAttempts["ordres"] ?: 0) < 2 && redDotOnOrders(rgb)) {
                     dailyAttempts["ordres"] = (dailyAttempts["ordres"] ?: 0) + 1
                     dailyState = "ORDRES"
@@ -2033,6 +2048,7 @@ class BotService : Service() {
             "MARCHAND" -> detectMarchand(rgb, now)
             "VIP" -> detectVip(rgb, now)
             "BONUS" -> detectBonus(rgb, now)
+            "BANQUET" -> detectBanquet(rgb, now)
             "PET" -> detectPet(rgb, now)
             "SHOP" -> detectBq(rgb, now)
         }
@@ -3981,6 +3997,80 @@ class BotService : Service() {
             }
             else -> {
                 if (petReward || now - petAt > 2_800L) petNext()
+            }
+        }
+    }
+
+    // ---------- Banquet Gastronomique (préambule du Daily, même plage horaire que le bonus de collecte) ----------
+
+    private var banqueTries = 0
+    private var banquePlus = 0
+
+    /**
+     * Ville > avatar en haut à gauche > « Profil du Chef » > « + » à côté de l'endurance > fenêtre « Obtenir plus » :
+     * si le bouton vert « Récupérer » du Banquet Gastronomique (première ligne) est là, on le touche ; sinon (minuteur gris)
+     * rien > croix de la fenêtre > flèche bleue du profil > ville.
+     */
+    private fun detectBanquet(rgb: Mat, now: Long) {
+        if (now - dailyIdleAt > 10_000L) {
+            log("daily : Banquet Gastronomique abandonné (10 s sans écran reconnu)")
+            lastClick = now
+            backArrow()
+            dailyAttempts["banquet"] = 2
+            dailyState = "OPEN"
+            dailyTries = 0
+            return
+        }
+        // fenêtre « Obtenir plus » : bandeau d'en-tête beige ; profil : bouton « + » turquoise sous l'endurance
+        val window = colorRect(rgb, 60, 440, 960, 500, Scalar(10.0, 20.0, 150.0), Scalar(30.0, 90.0, 255.0)) >= 0.5
+        val profile = !window && colorRect(rgb, 320, 2060, 385, 2120, Scalar(85.0, 120.0, 170.0), Scalar(105.0, 255.0, 255.0)) >= 0.3
+        when {
+            window -> {
+                dailyIdleAt = now
+                if (dailyStep >= 2) return // croix déjà touchée : la fenêtre se ferme
+                val green = colorRect(rgb, 740, 825, 1000, 925, Scalar(40.0, 120.0, 120.0), Scalar(85.0, 255.0, 255.0))
+                if (green >= 0.4 && banqueTries < 2) {
+                    banqueTries++
+                    dailyStepAt = now
+                    clickRef(868.0, 873.0, "daily : Banquet Gastronomique : Récupérer (essai $banqueTries)")
+                    return
+                }
+                if (now - dailyStepAt < 2_000L) return // fenêtre qui s'anime / récompense qui s'inscrit : on relit
+                log("daily : Banquet Gastronomique : ${if (banqueTries > 0) "récupéré" else "rien à récupérer (minuteur gris)"}, fermeture")
+                dailyStep = 2
+                dailyStepAt = now
+                clickRef(1002.0, 467.0, "daily : Banquet Gastronomique : fermeture de la fenêtre (croix)")
+            }
+            profile -> {
+                dailyIdleAt = now
+                if (dailyStep >= 2) {
+                    if (now - dailyStepAt < 800L) return
+                    lastClick = now
+                    backArrow()
+                    dailyAttempts["banquet"] = 2
+                    dailyTaskDone("Banquet Gastronomique")
+                    return
+                }
+                if (dailyStep == 1 && now - dailyStepAt < 2_500L) return // le « + » vient d'être touché : la fenêtre arrive
+                if (++banquePlus > 3) {
+                    log("daily : Banquet Gastronomique : la fenêtre ne s'ouvre pas, abandon")
+                    lastClick = now
+                    backArrow()
+                    dailyAttempts["banquet"] = 2
+                    dailyTaskDone("Banquet Gastronomique")
+                    return
+                }
+                dailyStep = 1
+                dailyStepAt = now
+                clickRef(350.0, 2090.0, "daily : Banquet Gastronomique : clic sur le « + » de l'endurance")
+            }
+            else -> {
+                // écran de récompense éventuel après « Récupérer »
+                val rw = ocrRef(rgb, 200, 2150, 880, 2240)
+                if ("appuie" in rw || "quitter" in rw) {
+                    dailyIdleAt = now
+                    tapRewards("daily : Banquet Gastronomique : récompense, appui n'importe où")
+                }
             }
         }
     }

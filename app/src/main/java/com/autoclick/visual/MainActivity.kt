@@ -440,6 +440,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(label("À (heure, 0 à 23)"))
         bonusToEdit = numberField("bonusTo", 9)
         root.addView(bonusToEdit)
+        root.addView(label("Cette plage horaire (et la même case) sert aussi à la visite du Banquet Gastronomique (profil > « + » de l'endurance > « Récupérer » s'il est disponible), faite juste après le bonus de collecte."))
         root.addView(label("Ouvrez le jeu sur la ville (ou la carte), menu de gauche fermé, puis démarrez."))
     }
 
