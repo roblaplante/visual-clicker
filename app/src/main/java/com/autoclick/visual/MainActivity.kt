@@ -36,7 +36,7 @@ import java.io.FileOutputStream
  */
 class MainActivity : AppCompatActivity() {
 
-    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?), 7 = Daily, 8 = Marchand nomade, 9 = Épreuves Mystiques
+    private var screen = 0 // 0 = menu, 1 = missions (réglages), 2 = farm (réglages), 3 = farm (5 ou 6 ?), 4 = hunt (5 ou 6 ?), 5 = hunt (réglages), 6 = missions (5 ou 6 ?), 7 = Daily, 8 = Marchand nomade, 9 = Épreuves Mystiques, 11 = Soigner les troupes
     private var farmN = 5 // nombre de marches choisi pour le farm : chaque cas a ses propres réglages
     private var huntN = 5 // idem pour le hunt
     private lateinit var huntCountEdit: EditText
@@ -172,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(button("Daily (tâches quotidiennes)") { showDaily() })
         root.addView(button("Marchand nomade") { showMarchand() })
         root.addView(button("Épreuves Mystiques") { showEpreuves() })
+        root.addView(button("Soigner les troupes") { showHeal() })
 
         root.addView(label("Autorisations (à faire une seule fois)"))
         root.addView(button("Activer le service d'accessibilité") {
@@ -483,6 +484,36 @@ class MainActivity : AppCompatActivity() {
         root.addView(label("Ouvrez le jeu sur la ville (ou directement dans le magasin), puis démarrez."))
     }
 
+    // ---------- Soigner les troupes (à la demande) ----------
+
+    private lateinit var healQtyEdit: EditText
+
+    private fun showHeal() {
+        screen = 11
+        val root = newRoot()
+        root.addView(backToMenuButton())
+        root.addView(button("Démarrer") { start("heal") })
+        root.addView(TextView(this).apply { text = "Soigner les troupes"; textSize = 22f })
+        root.addView(
+            label(
+                "Principe : en ville, l'appli touche la croix verte des blessés (en bas à droite), règle la quantité " +
+                    "(touche le champ à droite de la jauge, efface et tape le nombre au clavier numérique, OK), touche " +
+                    "« Soigner » puis « Aide » pour demander l'aide de l'alliance, attend la fin de la guérison et recommence, " +
+                    "jusqu'à ce qu'il n'y ait plus de blessés (compteur à zéro ou croix verte disparue)."
+            )
+        )
+        root.addView(
+            label(
+                "Elle ne touche jamais « Terminer » (gemmes) ni « Annuler soins ». Si « Soigner » reste sans effet " +
+                    "(ressources insuffisantes), ou si la guérison dure plus de 2 min 30 sans l'aide de l'alliance, elle s'arrête."
+            )
+        )
+        root.addView(label("Nombre de soldats soignés à chaque lot (500 par défaut ; moins s'il en reste moins) :"))
+        healQtyEdit = numberField("healQty", 500)
+        root.addView(healQtyEdit)
+        root.addView(label("Ouvrez le jeu sur la ville (la croix verte des blessés doit être visible), puis démarrez."))
+    }
+
     // ---------- Épreuves Mystiques (à la demande) ----------
 
     private val epGroups = listOf(
@@ -696,6 +727,10 @@ class MainActivity : AppCompatActivity() {
         }
         if (screen == 10) {
             saveEpTeam()
+            return
+        }
+        if (screen == 11) {
+            sp.edit().putInt("healQty", (healQtyEdit.text.toString().toIntOrNull() ?: 500).coerceIn(1, 999_999)).apply()
             return
         }
         if (screen == 8) {

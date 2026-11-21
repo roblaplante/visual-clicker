@@ -202,6 +202,8 @@ class BotService : Service() {
             loadMarchand()
         } else if (mode == "epreuves") {
             loadEpreuves()
+        } else if (mode == "heal") {
+            loadHeal()
         } else {
             loadTemplates()
             loadGate()
@@ -241,6 +243,7 @@ class BotService : Service() {
                     "daily" -> loadDaily()
                     "marchand" -> loadMarchand()
                     "epreuves" -> loadEpreuves()
+                    "heal" -> loadHeal()
                     else -> {
                         loadTemplates()
                         loadGate()
@@ -634,6 +637,10 @@ class BotService : Service() {
         }
         if (mode == "epreuves") {
             detectEpreuves(rgb)
+            return
+        }
+        if (mode == "heal") {
+            detectHeal(screen, rgb)
             return
         }
         val now = SystemClock.uptimeMillis()
@@ -4415,6 +4422,247 @@ class BotService : Service() {
         }
     }
 
+    // ---------- Soigner les troupes (menu « Soigner les troupes », à la demande) ----------
+
+    private var healFinished = false
+    private var healUnknownAt = 0L
+    private var healBackTries = 0
+    private var healNoIconSince = 0L
+    private var healIconTries = 0
+    private var healIconAt = 0L
+    private var healPopupAt = 0L
+    private var healIdleSince = 0L
+    private var healTyped = false
+    private var healBackLeft = 0
+    private var healTypeIdx = 0
+    private var healWant = ""
+    private var healKbClicks = 0
+    private var healSoignerAt = 0L
+    private var healSoignerTries = 0
+    private var healNAtClick = -1
+    private var healAideAt = 0L
+    private var healAideTries = 0
+    private var healHealSince = 0L
+    private var healBatches = 0
+    private var healLastN = -1
+    private var healZeroSeen = 0
+
+    private val healGreenLo = Scalar(55.0, 120.0, 100.0)
+    private val healGreenHi = Scalar(80.0, 255.0, 255.0)
+    private val healWhiteLo = Scalar(0.0, 0.0, 225.0)
+    private val healWhiteHi = Scalar(180.0, 50.0, 255.0)
+    private val healTealLo = Scalar(85.0, 120.0, 150.0)
+    private val healTealHi = Scalar(105.0, 255.0, 255.0)
+    private val healOrangeLo = Scalar(8.0, 150.0, 180.0)
+    private val healOrangeHi = Scalar(25.0, 255.0, 255.0)
+    private val healDarkLo = Scalar(0.0, 0.0, 0.0)
+    private val healDarkHi = Scalar(180.0, 255.0, 70.0)
+    private val healBarLo = Scalar(0.0, 0.0, 235.0)
+    private val healBarHi = Scalar(180.0, 30.0, 255.0)
+
+    // Pavé numérique du clavier (coordonnées de référence 1080 px).
+    private val healKeys = mapOf(
+        '1' to Pair(110.0, 1620.0), '2' to Pair(325.0, 1620.0), '3' to Pair(540.0, 1620.0),
+        '4' to Pair(110.0, 1785.0), '5' to Pair(325.0, 1785.0), '6' to Pair(540.0, 1785.0),
+        '7' to Pair(110.0, 1945.0), '8' to Pair(325.0, 1945.0), '9' to Pair(540.0, 1945.0),
+        '0' to Pair(325.0, 2110.0)
+    )
+
+    private fun resetHeal() {
+        healFinished = false; healUnknownAt = 0L; healBackTries = 0; healNoIconSince = 0L; healIconTries = 0; healIconAt = 0L
+        healPopupAt = 0L; healIdleSince = 0L; healTyped = false; healBackLeft = 0; healTypeIdx = 0; healWant = ""; healKbClicks = 0
+        healSoignerAt = 0L; healSoignerTries = 0; healNAtClick = -1; healAideAt = 0L; healAideTries = 0; healHealSince = 0L
+        healBatches = 0; healLastN = -1; healZeroSeen = 0
+    }
+
+    private fun loadHeal() {
+        loadAsset("heal/icone.png")?.let { farm["heal_icone"] = it }
+        resetHeal()
+        log("soigner : démarrage (à la demande)")
+    }
+
+    private fun healStop(msg: String) {
+        healFinished = true
+        log("soigner : $msg")
+        main.post { pauseBot("Soigner les troupes : $msg") }
+    }
+
+    /** Croix verte (gabarit) confirmée par la couleur : un carré vert avec une croix blanche. */
+    private fun healIconPoint(screen: Mat, rgb: Mat): Pair<Float, Float>? {
+        val t = farm["heal_icone"] ?: return null
+        val mm = farmMatch(screen, "heal_icone", 0.8) ?: return null
+        val x = mm.maxLoc.x.toInt()
+        val y = mm.maxLoc.y.toInt()
+        if (x < 0 || y < 0 || x + t.cols() > rgb.cols() || y + t.rows() > rgb.rows()) return null
+        val hsv = Mat()
+        Imgproc.cvtColor(Mat(rgb, Rect(x, y, t.cols(), t.rows())), hsv, Imgproc.COLOR_RGB2HSV)
+        val g = Mat()
+        val wm = Mat()
+        Core.inRange(hsv, healGreenLo, healGreenHi, g)
+        Core.inRange(hsv, healWhiteLo, healWhiteHi, wm)
+        val area = (t.cols() * t.rows()).toDouble()
+        val gf = Core.countNonZero(g) / area
+        val wf = Core.countNonZero(wm) / area
+        hsv.release(); g.release(); wm.release()
+        if (gf < 0.5 || wf < 0.12) return null
+        return farmCenter("heal_icone", mm)
+    }
+
+    /** Nombre de blessés restants : « Gravement Blessé(s) 2 430/173 400 » -> 2430 ; null si illisible (bandeau de message par-dessus). */
+    private fun healRemaining(rgb: Mat): Int? {
+        val t = ocrRef(rgb, 235, 815, 720, 885, true)
+        val i = t.indexOf('/')
+        if (i < 0) return null
+        val d = t.substring(0, i).filter { it.isDigit() }
+        return if (d.isEmpty() || d.length > 7) null else d.toIntOrNull()
+    }
+
+    /** Quantité affichée dans le champ à droite de la jauge (500, 462…). */
+    private fun healField(rgb: Mat): Int? {
+        val d = ocrRefWhite(rgb, 735, 1000, 895, 1055).filter { it.isDigit() }
+        return if (d.isEmpty() || d.length > 7) null else d.toIntOrNull()
+    }
+
+    private fun detectHeal(screen: Mat, rgb: Mat) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClick < minOf(cooldown, 450L) || healFinished) return
+
+        // 1) clavier numérique ouvert (barre blanche de saisie + touches sombres)
+        if (colorRect(rgb, 0, 1560, 1080, 2150, healDarkLo, healDarkHi) >= 0.6 &&
+            colorRect(rgb, 0, 1390, 700, 1530, healBarLo, healBarHi) >= 0.8
+        ) {
+            healUnknownAt = 0L
+            healKeyboard()
+            return
+        }
+
+        // 2) fenêtre « Soigner les Blessés » : Terminer (orange) au milieu et Soigner / Aide (turquoise) à droite
+        if (colorRect(rgb, 325, 1775, 600, 1880, healOrangeLo, healOrangeHi) >= 0.5 &&
+            colorRect(rgb, 640, 1775, 915, 1880, healTealLo, healTealHi) >= 0.4
+        ) {
+            var title = now - healPopupAt <= 15_000L
+            if (!title) {
+                val t = ocrRef(rgb, 240, 680, 840, 760, true)
+                title = "bless" in t || "soigner" in t || "wounded" in t || "heal" in t
+            }
+            if (title) {
+                healPopup(rgb, now)
+                return
+            }
+        }
+
+        // 3) ville : croix verte des blessés (en bas à droite)
+        val icon = healIconPoint(screen, rgb)
+        if (icon != null) {
+            healNoIconSince = 0L; healUnknownAt = 0L; healBackTries = 0
+            if (now - healIconAt >= 3_000L) {
+                if (++healIconTries > 5) { healStop("la croix verte ne s'ouvre pas (5 essais), arrêt"); return }
+                healIconAt = now
+                farmClick(icon.first, icon.second, "soigner : croix verte touchée (essai $healIconTries)")
+            }
+            return
+        }
+        val bar = ocrRef(rgb, 0, 2270, 1080, 2335)
+        val city = "magasin" in bar && listOf("conqu", "héros", "heros", "alliance", "monde", "sac").count { it in bar } >= 1
+        if (city) {
+            healUnknownAt = 0L; healBackTries = 0
+            if (healNoIconSince == 0L) healNoIconSince = now
+            if (now - healNoIconSince >= 4_000L) {
+                healStop(if (healBatches > 0 || healLastN == 0) "tous les blessés sont soignés" else "aucun blessé à soigner (croix verte absente)")
+            }
+            return
+        }
+
+        // écran inconnu : on laisse 10 s, puis on essaie la flèche de retour
+        if (healUnknownAt == 0L) healUnknownAt = now
+        if (now - healUnknownAt > 10_000L) {
+            healUnknownAt = now
+            if (++healBackTries > 4) { healStop("écran inconnu, arrêt"); return }
+            lastClick = now
+            backArrow()
+            log("soigner : écran inconnu, flèche retour")
+        }
+    }
+
+    private fun healPopup(rgb: Mat, now: Long) {
+        healPopupAt = now
+        healUnknownAt = 0L; healBackTries = 0; healNoIconSince = 0L; healIconTries = 0
+        val leftTeal = colorRect(rgb, 120, 1775, 285, 1880, healTealLo, healTealHi)
+        val leftOrange = colorRect(rgb, 120, 1775, 285, 1880, healOrangeLo, healOrangeHi)
+        if (leftOrange >= 0.3) {
+            // guérison en cours : « Annuler soins » (orange) à gauche, « Terminer » (gemmes) au milieu : jamais touchés ; « Aide » à droite
+            healIdleSince = 0L
+            if (healHealSince == 0L) { healHealSince = now; healAideTries = 0; healSoignerTries = 0; healTyped = false }
+            if (healAideTries < 2 && now - healAideAt >= 2_500L) {
+                healAideTries++
+                healAideAt = now
+                clickRef(775.0, 1825.0, "soigner : guérison en cours : « Aide » (essai $healAideTries)")
+                return
+            }
+            if (now - healHealSince > 150_000L) healStop("la guérison dure trop longtemps (l'alliance n'aide pas ?), arrêt")
+            return
+        }
+        if (leftTeal < 0.3) return // bouton de gauche masqué (animation) : on attend
+        if (healHealSince != 0L) {
+            healHealSince = 0L
+            healBatches++
+            log("soigner : lot $healBatches terminé")
+        }
+        if (healIdleSince == 0L) healIdleSince = now
+        val n = healRemaining(rgb)
+        if (n == null && now - healIdleSince < 3_000L) return // bandeau de message sur le compteur : on laisse passer
+        if (n != null) {
+            healLastN = n
+            if (healNAtClick in 0..Int.MAX_VALUE && n < healNAtClick) healSoignerTries = 0 // ça avance
+        }
+        if (n == 0) {
+            if (++healZeroSeen >= 2) {
+                clickRef(897.0, 718.0, "soigner : plus aucun blessé : fenêtre fermée")
+                healStop("tous les blessés sont soignés")
+            }
+            return
+        }
+        healZeroSeen = 0
+        val cfgQty = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(1, 999_999)
+        val want = if (n != null) minOf(cfgQty, n) else cfgQty
+        val field = healField(rgb)
+        if (!healTyped && field != null && field != want) {
+            healTyped = true
+            healWant = want.toString()
+            healBackLeft = field.toString().length + 1
+            healTypeIdx = 0
+            healKbClicks = 0
+            clickRef(812.0, 1030.0, "soigner : quantité $field -> $want : champ touché")
+            return
+        }
+        healTyped = true
+        if (now - healSoignerAt < 3_000L) return
+        if (++healSoignerTries > 3) { healStop("« Soigner » sans effet (ressources insuffisantes ?), arrêt"); return }
+        healSoignerAt = now
+        healNAtClick = n ?: -1
+        clickRef(775.0, 1850.0, "soigner : lot ${healBatches + 1} : « Soigner » (quantité ${field ?: "?"}, restants ${n ?: "?"})")
+    }
+
+    /** Efface l'ancienne valeur (retour arrière), tape la quantité voulue au pavé numérique, puis OK. Une touche par passage. */
+    private fun healKeyboard() {
+        if (++healKbClicks > 25 || healWant.isEmpty()) {
+            clickRef(975.0, 1460.0, "soigner : clavier : OK")
+            return
+        }
+        if (healBackLeft > 0) {
+            healBackLeft--
+            clickRef(1005.0, 1950.0, "soigner : clavier : effacer")
+            return
+        }
+        if (healTypeIdx < healWant.length) {
+            val c = healWant[healTypeIdx++]
+            val p = healKeys[c] ?: return
+            clickRef(p.first, p.second, "soigner : clavier : $c")
+            return
+        }
+        clickRef(975.0, 1460.0, "soigner : clavier : OK (quantité $healWant)")
+    }
+
     // ---------- Épreuves Mystiques (menu « Épreuves Mystiques », à la demande) ----------
 
     private class EpIsland(
@@ -5535,6 +5783,7 @@ class BotService : Service() {
             if (mode == "daily" && dailyFinished) resetDaily()
             if (mode == "marchand" && marchandFinished) resetMarchandSolo()
             if (mode == "epreuves" && epFinished) resetEpreuves()
+            if (mode == "heal" && healFinished) resetHeal()
         }
         tv.text = if (running) "⏸" else "▶"
         (tv.background as GradientDrawable)
