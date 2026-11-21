@@ -4464,6 +4464,7 @@ class BotService : Service() {
     private var healSampT = -1       // dernier temps restant lu pendant la guérison (s)
     private var healSampAt = 0L
     private var healCalc = -1        // montant calculé à la fin de l'aide des alliés (-1 : pas de mesure)
+    private var healFieldBelief = -1 // valeur que nous avons tapée dans le champ (le jeu la garde d'un lot à l'autre)
 
     private val healGreenLo = Scalar(55.0, 120.0, 100.0)
     private val healGreenHi = Scalar(80.0, 255.0, 255.0)
@@ -4494,7 +4495,7 @@ class BotService : Service() {
         healAmt = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(10, 173_400)
         healStep = 100; healOkMax = -1; healBadMin = Int.MAX_VALUE; healUsed = 0; healBatchBad = false
         healAccelTries = 0; healAccelAt = 0L; healWinAt = 0L; healWinTries = 0; healChkClicked = false
-        healT0 = -1; healSampT = -1; healSampAt = 0L; healCalc = -1
+        healT0 = -1; healSampT = -1; healSampAt = 0L; healCalc = -1; healFieldBelief = -1
     }
 
     private fun loadHeal() {
@@ -4698,17 +4699,35 @@ class BotService : Service() {
         }
         healZeroSeen = 0
         val want = if (n != null) minOf(healAmt, n) else healAmt
-        val field = healField(rgb)
+        val ocrField = healField(rgb)
+        // Le jeu garde la quantité d'un lot à l'autre : on se fie à ce que nous y avons tapé ; la lecture peut perdre un chiffre (« 560 » lu « 60 »).
+        val known = healFieldBelief > 0
+        val field: Int? = when {
+            ocrField == null -> if (known) healFieldBelief else null
+            known && healFieldSane(ocrField, healFieldBelief) -> healFieldBelief
+            else -> ocrField
+        }
         if (!healTyped && field != null && field != want) {
             healTyped = true
             healWant = want.toString()
-            healBackLeft = field.toString().length + 1
-            healTypeIdx = 0
+            val cur = field.toString()
+            if (known && field == healFieldBelief) {
+                // valeur certaine : on n'efface et ne retape que la fin qui change
+                var k = 0
+                while (k < cur.length && k < healWant.length && cur[k] == healWant[k]) k++
+                healBackLeft = cur.length - k
+                healTypeIdx = k
+            } else {
+                healBackLeft = cur.length + 1
+                healTypeIdx = 0
+            }
+            healFieldBelief = want
             healKbClicks = 0
             clickRef(812.0, 1030.0, "soigner : quantité $field -> $want : champ touché")
             return
         }
         healTyped = true
+        if (field != null && field == want) healFieldBelief = want
         if (now - healSoignerAt < 3_000L) return
         if (++healSoignerTries > 3) { healStop("« Soigner » sans effet (ressources insuffisantes ?), arrêt"); return }
         healSoignerAt = now
@@ -4718,6 +4737,17 @@ class BotService : Service() {
         val dur = ocrRefWhite(rgb, 700, 1815, 915, 1885).replace("\n", " ").trim()
         healT0 = healParseTime(dur) ?: -1
         clickRef(775.0, 1850.0, "soigner : lot ${healBatches + 1} : « Soigner » (ligne du haut $healUsed, 2e ligne ${if (f2.isEmpty()) "-" else f2}, durée « $dur », restants ${n ?: "?"}, montant visé $healAmt)")
+    }
+
+    /** Lecture du champ plausible : identique, ou avec un chiffre perdu (« 60 » pour 560). */
+    private fun healFieldSane(ocr: Int, belief: Int): Boolean {
+        val a = ocr.toString()
+        val b = belief.toString()
+        if (a == b) return true
+        if (a.length != b.length - 1) return false
+        var i = 0
+        for (c in b) if (i < a.length && a[i] == c) i++
+        return i == a.length
     }
 
     /** « 01:11:48 » -> 4308 s ; « 28:53 » -> 1733 s ; null si illisible. */
@@ -4740,12 +4770,12 @@ class BotService : Service() {
             if (used <= healOkMax) { healOkMax = -1; healStep = 100 }
             healBadMin = minOf(healBadMin, used)
             if (healCalc in 10 until used) {
-                // montant calculé d'après ce que l'aide des alliés a retiré : on s'y tient (pas de tâtonnement)
-                healAmt = healCalc
-                healOkMax = healCalc
-                healBadMin = healCalc + 10
+                // montant calculé d'après ce que l'aide des alliés a retiré : point de départ, puis on remonte par dizaines
+                // tant que l'aide suffit, sans jamais retenter un montant qui a échoué (le nombre d'alliés en ligne varie un peu)
+                healAmt = maxOf(10, minOf(healCalc, healBadMin - 10))
+                healOkMax = -1
                 healStep = 10
-                log("soigner : $used soldats : trop pour l'aide des alliés ; montant calculé $healAmt")
+                log("soigner : $used soldats : trop pour l'aide des alliés ; montant calculé $healCalc, reprise à $healAmt")
             } else {
                 healAmt = if (healOkMax in 1 until used) healOkMax else maxOf(10, used - healStep)
                 log("soigner : $used soldats : trop pour l'aide des alliés ; prochain montant $healAmt (pas $healStep)")
