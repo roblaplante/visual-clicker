@@ -507,8 +507,9 @@ class MainActivity : AppCompatActivity() {
                 "Le bon montant dépend du nombre d'alliés en ligne : l'appli le cherche toute seule. Elle part du montant " +
                     "ci-dessous ; tant que l'aide des alliés suffit à finir la guérison, elle monte par centaines. Si " +
                     "l'aide ne suffit pas (le bouton devient « Accélér. »), elle utilise les accélérateurs (« Utilisation " +
-                    "rapide », case « Ne plus afficher pour aujourd'hui » cochée, « Utiliser »), redescend au dernier bon " +
-                    "montant puis affine par dizaines. Si les alliés en ligne changent, elle repart par centaines. " +
+                    "rapide », case « Ne plus afficher pour aujourd'hui » cochée, « Utiliser »). Elle mesure alors le temps que " +
+                    "l'aide a retiré et en déduit tout de suite le bon montant (sinon : retour au dernier bon montant, puis " +
+                    "dizaines). Si les alliés en ligne changent, elle recalcule au lot suivant. " +
                     "Elle ne touche jamais « Terminer » (gemmes) ni « Annuler soins »."
             )
         )

@@ -4459,6 +4459,11 @@ class BotService : Service() {
     private var healWinTries = 0
     private var healChkClicked = false
     private val healGreenCk = Scalar(55.0, 100.0, 100.0)
+    // Calcul du montant exact : durée annoncée sur « Soigner », temps retiré par les alliés, proportionnalité.
+    private var healT0 = -1          // durée du lot (s), lue sur le bouton « Soigner » avant le clic
+    private var healSampT = -1       // dernier temps restant lu pendant la guérison (s)
+    private var healSampAt = 0L
+    private var healCalc = -1        // montant calculé à la fin de l'aide des alliés (-1 : pas de mesure)
 
     private val healGreenLo = Scalar(55.0, 120.0, 100.0)
     private val healGreenHi = Scalar(80.0, 255.0, 255.0)
@@ -4489,6 +4494,7 @@ class BotService : Service() {
         healAmt = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(10, 173_400)
         healStep = 100; healOkMax = -1; healBadMin = Int.MAX_VALUE; healUsed = 0; healBatchBad = false
         healAccelTries = 0; healAccelAt = 0L; healWinAt = 0L; healWinTries = 0; healChkClicked = false
+        healT0 = -1; healSampT = -1; healSampAt = 0L; healCalc = -1
     }
 
     private fun loadHeal() {
@@ -4623,7 +4629,7 @@ class BotService : Service() {
             healIdleSince = 0L
             if (healHealSince == 0L) {
                 healHealSince = now; healAideTries = 0; healSoignerTries = 0; healTyped = false
-                healAccelTries = 0; healWinTries = 0; healChkClicked = false
+                healAccelTries = 0; healWinTries = 0; healChkClicked = false; healSampAt = 0L; healSampT = -1; healCalc = -1
             }
             if (healAideTries < 1) {
                 healAideTries++
@@ -4631,8 +4637,34 @@ class BotService : Service() {
                 clickRef(775.0, 1825.0, "soigner : guérison en cours : « Aide »")
                 return
             }
-            // on laisse 15 s aux alliés pour aider ; si la guérison n'est pas finie, le montant était trop élevé : « Accélér. »
-            if (now - healAideAt >= 15_000L && now - healAccelAt >= 4_000L) {
+            // Dès 5 s après « Aide », on suit le temps restant : quand il ne baisse plus plus vite que le temps qui passe,
+            // les alliés ont fini d'aider. S'il reste du temps, le montant était trop élevé : on mesure ce que l'aide a retiré
+            // (pour calculer le bon montant) puis « Accélér. » (même bouton, même place).
+            val sinceAide = now - healAideAt
+            if (healAccelTries == 0) {
+                if (sinceAide < 5_000L) return
+                if (healSampAt != 0L && now - healSampAt < 1_500L) return
+                val rem = healParseTime(ocrRefWhite(rgb, 600, 1668, 845, 1718))
+                var done = sinceAide >= 12_000L
+                if (rem != null) {
+                    if (healSampAt != 0L && healSampT >= 0) {
+                        val dt = (now - healSampAt) / 1000.0
+                        if (healSampT - rem <= dt * 1.5 + 1.0) done = true
+                    }
+                    if (!done) { healSampT = rem; healSampAt = now; return }
+                    if (healT0 <= 0) healT0 = rem + ((now - healSoignerAt) / 1000.0).toInt()
+                    val removed = healT0 - (now - healSoignerAt) / 1000.0 - rem
+                    if (removed > 0 && healUsed > 0) {
+                        healCalc = maxOf(10, ((healUsed * removed / healT0 * 0.95) / 10).toInt() * 10)
+                        log("soigner : fin de l'aide des alliés : durée du lot ${healT0} s, reste $rem s, retiré ${removed.toInt()} s : montant calculé $healCalc")
+                    }
+                } else {
+                    if (!done && sinceAide < 9_000L) return
+                    log("soigner : temps restant illisible : accélération sans mesure")
+                }
+                healSampAt = 0L
+            } else if (now - healAccelAt < 3_500L) return
+            if (now - healAccelAt >= 3_500L) {
                 if (++healAccelTries > 3) { healStop("la guérison n'avance plus (plus d'accélérateurs ?), arrêt"); return }
                 healAccelAt = now
                 clickRef(775.0, 1825.0, "soigner : il reste du temps après l'aide des alliés : bouton de droite « Accélér. » (essai $healAccelTries)")
@@ -4684,7 +4716,16 @@ class BotService : Service() {
         healUsed = field ?: want
         val f2 = ocrRefWhite(rgb, 735, 1215, 895, 1270).filter { it.isDigit() }
         val dur = ocrRefWhite(rgb, 700, 1815, 915, 1885).replace("\n", " ").trim()
+        healT0 = healParseTime(dur) ?: -1
         clickRef(775.0, 1850.0, "soigner : lot ${healBatches + 1} : « Soigner » (ligne du haut $healUsed, 2e ligne ${if (f2.isEmpty()) "-" else f2}, durée « $dur », restants ${n ?: "?"}, montant visé $healAmt)")
+    }
+
+    /** « 01:11:48 » -> 4308 s ; « 28:53 » -> 1733 s ; null si illisible. */
+    private fun healParseTime(raw: String): Int? {
+        val t = raw.replace("\n", " ").replace(" ", "").replace('o', '0').replace('O', '0').replace('l', '1').replace('i', '1')
+        Regex("(\\d{1,3})[:.;,](\\d{2})[:.;,](\\d{2})").find(t)?.let { return it.groupValues[1].toInt() * 3600 + it.groupValues[2].toInt() * 60 + it.groupValues[3].toInt() }
+        Regex("(\\d{1,2})[:.;,](\\d{2})").find(t)?.let { return it.groupValues[1].toInt() * 60 + it.groupValues[2].toInt() }
+        return null
     }
 
     /**
@@ -4698,8 +4739,18 @@ class BotService : Service() {
         if (bad) {
             if (used <= healOkMax) { healOkMax = -1; healStep = 100 }
             healBadMin = minOf(healBadMin, used)
-            healAmt = if (healOkMax in 1 until used) healOkMax else maxOf(10, used - healStep)
-            log("soigner : $used soldats : trop pour l'aide des alliés ; prochain montant $healAmt (pas $healStep)")
+            if (healCalc in 10 until used) {
+                // montant calculé d'après ce que l'aide des alliés a retiré : on s'y tient (pas de tâtonnement)
+                healAmt = healCalc
+                healOkMax = healCalc
+                healBadMin = healCalc + 10
+                healStep = 10
+                log("soigner : $used soldats : trop pour l'aide des alliés ; montant calculé $healAmt")
+            } else {
+                healAmt = if (healOkMax in 1 until used) healOkMax else maxOf(10, used - healStep)
+                log("soigner : $used soldats : trop pour l'aide des alliés ; prochain montant $healAmt (pas $healStep)")
+            }
+            healCalc = -1
         } else {
             if (used >= healBadMin) { healBadMin = Int.MAX_VALUE; healStep = 100 }
             healOkMax = maxOf(healOkMax, used)
