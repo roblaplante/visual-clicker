@@ -1687,7 +1687,7 @@ class BotService : Service() {
     }
 
     private fun loadDaily() {
-        for (path in listOf("daily/coffre_bulle.png", "daily/goutte.png", "daily/golem.png", "daily/bonus_collecte.png")) {
+        for (path in listOf("daily/coffre_bulle.png", "daily/goutte.png", "daily/golem.png", "daily/golem2.png", "daily/bonus_collecte.png")) {
             val m = loadAsset(path) ?: continue
             farm[path.substringAfter('/').removeSuffix(".png")] = m
         }
@@ -1894,7 +1894,7 @@ class BotService : Service() {
                     return
                 }
                 // Puis l'événement « Assaut Rebelle » (golem rouge en haut à gauche, avec son minuteur)
-                val golem = if (cityVisible && (dailyAttempts["combat"] ?: 0) < 2) farmMatch(screen, "golem", 0.8) else null
+                val golem = if (cityVisible && (dailyAttempts["combat"] ?: 0) < 2) golemPoint(screen) else null
                 if (golem != null) {
                     dailyAttempts["combat"] = (dailyAttempts["combat"] ?: 0) + 1
                     dailyState = "COMBAT"
@@ -1903,8 +1903,7 @@ class BotService : Service() {
                     dailyActAt = now
                     dailyIdleAt = now
                     dailyStepAt = now
-                    val (gx, gy) = farmCenter("golem", golem)
-                    farmClick(gx, gy + (60 * w / 1080.0).toFloat(), "daily : Combat : icône Assaut Rebelle, ouverture")
+                    farmClick(golem.first, golem.second, "daily : Combat : icône Assaut Rebelle, ouverture")
                     return
                 }
                 // Tout dernier préambule : boutiques (panier + gemmes en haut à droite avec un point rouge)
@@ -2772,14 +2771,27 @@ class BotService : Service() {
             if (dailyStep >= 3) {
                 dailyTaskDone("Combat")
             } else if (dailyStep <= 1 && now - dailyActAt > 3_500L) {
-                val golem = farmMatch(screen, "golem", 0.8)
+                val golem = golemPoint(screen)
                 if (golem != null) {
                     dailyActAt = now
-                    val (gx, gy) = farmCenter("golem", golem)
-                    farmClick(gx, gy + (60 * w / 1080.0).toFloat(), "daily : Combat : nouveau clic sur l'icône")
+                    farmClick(golem.first, golem.second, "daily : Combat : nouveau clic sur l'icône")
                 }
             }
         }
+    }
+
+    /**
+     * Icône « Assaut Rebelle » (golem rouge en haut à gauche). Le premier gabarit contenait un bout de décor derrière la carte
+     * (score 0,76 seulement quand le décor change) : le second est coupé dans la carte même (marteau, tête, yeux), sans le
+     * minuteur ni le décor. Renvoie le point à toucher (centre de la carte), ou null.
+     */
+    private fun golemPoint(screen: Mat): Pair<Float, Float>? {
+        farmMatch(screen, "golem2", 0.8)?.let { return farmCenter("golem2", it) }
+        farmMatch(screen, "golem", 0.8)?.let {
+            val (gx, gy) = farmCenter("golem", it)
+            return Pair(gx, gy + (60 * w / 1080.0).toFloat())
+        }
+        return null
     }
 
     /** Centres (pleine résolution) de toutes les correspondances d'une image, au-dessus du seuil. */
