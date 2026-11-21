@@ -4468,6 +4468,7 @@ class BotService : Service() {
     private var healSampT = -1       // dernier temps restant lu pendant la guérison (s)
     private var healSampAt = 0L
     private var healCalc = -1        // montant calculé à la fin de l'aide des alliés (-1 : pas de mesure)
+    private var healRow = 0 // ligne de troupes pilotée (0 = celle du haut) : celle qui a vraiment des blessés à soigner
     private var healFieldBelief = -1 // valeur que nous avons tapée dans le champ (le jeu la garde d'un lot à l'autre)
 
     private val healGreenLo = Scalar(55.0, 120.0, 100.0)
@@ -4499,7 +4500,7 @@ class BotService : Service() {
         healAmt = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(10, 173_400)
         healStep = 100; healOkMax = -1; healBadMin = Int.MAX_VALUE; healUsed = 0; healBatchBad = false
         healAccelTries = 0; healAccelAt = 0L; healWinAt = 0L; healWinTries = 0; healChkClicked = false
-        healT0 = -1; healSampT = -1; healSampAt = 0L; healCalc = -1; healFieldBelief = -1
+        healT0 = -1; healSampT = -1; healSampAt = 0L; healCalc = -1; healFieldBelief = -1; healRow = 0
     }
 
     private fun loadHeal() {
@@ -4545,8 +4546,9 @@ class BotService : Service() {
     }
 
     /** Quantité affichée dans le champ à droite de la jauge (500, 462…). */
-    private fun healField(rgb: Mat): Int? {
-        val d = ocrRefWhite(rgb, 735, 1000, 895, 1055).filter { it.isDigit() }
+    private fun healField(rgb: Mat, row: Int = 0): Int? {
+        val dy = 213 * row
+        val d = ocrRefWhite(rgb, 735, 1000 + dy, 895, 1055 + dy).filter { it.isDigit() }
         return if (d.isEmpty() || d.length > 7) null else d.toIntOrNull()
     }
 
@@ -4704,7 +4706,20 @@ class BotService : Service() {
         healZeroSeen = 0
         val want = if (n != null) minOf(healAmt, n) else healAmt
         if (now < healSettleUntil || now < healKbWaitUntil) return // clavier en train de s'ouvrir ou de se fermer : on laisse l'écran se stabiliser
-        val ocrField = healField(rgb)
+        // Plusieurs lignes (infanterie, cavalerie, archers) : seule la ligne qui a des blessés compte (les lignes vides restent à 0 et le temps
+        // du lot ne dépend que d'elle). On pilote donc la ligne dont le champ est le plus grand, pas forcément celle du haut.
+        val rows = (0..2).map { healField(rgb, it) }
+        val own = rows[healRow]
+        if (!(healFieldBelief > 0 && (own == null || healFieldSane(own, healFieldBelief)))) {
+            var best = healRow
+            var bestV = own ?: -1
+            for (r in 0..2) { val v = rows[r] ?: continue; if (v > bestV) { best = r; bestV = v } }
+            if (best != healRow) {
+                log("soigner : ligne pilotée : ${best + 1} (champs lus ${rows.joinToString(" | ") { it?.toString() ?: "-" }})")
+                healRow = best; healFieldBelief = -1
+            }
+        }
+        val ocrField = rows[healRow]
         // Le jeu garde la quantité d'un lot à l'autre : on se fie à ce que nous y avons tapé ; la lecture peut perdre un chiffre (« 560 » lu « 60 »).
         val known = healFieldBelief > 0
         val field: Int? = when {
@@ -4729,7 +4744,7 @@ class BotService : Service() {
             }
             healFieldBelief = want
             healKbClicks = 0
-            clickRef(812.0, 1030.0, "soigner : quantité $field -> $want : champ touché")
+            clickRef(812.0, 1030.0 + 213.0 * healRow, "soigner : quantité $field -> $want : champ touché (ligne ${healRow + 1})")
             return
         }
         if (field != null && field == want) healFieldBelief = want
@@ -4738,10 +4753,18 @@ class BotService : Service() {
         healSoignerAt = now
         healNAtClick = n ?: -1
         healUsed = field ?: want
-        val f2 = ocrRefWhite(rgb, 735, 1215, 895, 1270).filter { it.isDigit() }
         val dur = ocrRefWhite(rgb, 700, 1815, 915, 1885).replace("\n", " ").trim()
         healT0 = healParseTime(dur) ?: -1
-        clickRef(775.0, 1850.0, "soigner : lot ${healBatches + 1} : « Soigner » (ligne du haut $healUsed, 2e ligne ${if (f2.isEmpty()) "-" else f2}, durée « $dur », restants ${n ?: "?"}, montant visé $healAmt)")
+        // Garde-fou : la durée du lot est proportionnelle au nombre de soldats réellement soignés (≈ 3,004 s chacun). Si elle est
+        // bien plus courte que le champ le laisse croire (champ plafonné, mauvaise ligne), on se fie à la durée.
+        if (healT0 > 0) {
+            val eff = (healT0 / 3.004).toInt()
+            if (eff < healUsed * 0.8) {
+                log("soigner : le champ dit $healUsed mais la durée correspond à $eff soldats : on retient $eff")
+                healUsed = maxOf(1, eff)
+            }
+        }
+        clickRef(775.0, 1850.0, "soigner : lot ${healBatches + 1} : « Soigner » (ligne ${healRow + 1} : $healUsed, champs ${rows.joinToString(" | ") { it?.toString() ?: "-" }}, durée « $dur », restants ${n ?: "?"}, montant visé $healAmt)")
     }
 
     /** Lecture du champ plausible : identique, ou avec un chiffre perdu (« 60 » pour 560). */
