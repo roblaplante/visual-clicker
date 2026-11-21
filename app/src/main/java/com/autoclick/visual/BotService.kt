@@ -4453,6 +4453,7 @@ class BotService : Service() {
     // Recherche du bon montant : « montant de départ », puis par centaines, puis par dizaines (voir healLearn).
     private var healAmt = 500
     private var healStep = 100
+    private var healStable = 0 // lots réussis de suite au montant trouvé
     private var healOkMax = -1
     private var healBadMin = Int.MAX_VALUE
     private var healUsed = 0
@@ -4498,7 +4499,7 @@ class BotService : Service() {
         healSoignerAt = 0L; healSoignerTries = 0; healNAtClick = -1; healAideAt = 0L; healAideTries = 0; healHealSince = 0L
         healBatches = 0; healLastN = -1; healZeroSeen = 0
         healAmt = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(10, 173_400)
-        healStep = 100; healOkMax = -1; healBadMin = Int.MAX_VALUE; healUsed = 0; healBatchBad = false
+        healStep = 100; healStable = 0; healOkMax = -1; healBadMin = Int.MAX_VALUE; healUsed = 0; healBatchBad = false
         healAccelTries = 0; healAccelAt = 0L; healWinAt = 0L; healWinTries = 0; healChkClicked = false
         healT0 = -1; healSampT = -1; healSampAt = 0L; healCalc = -1; healFieldBelief = -1; healRow = 0
     }
@@ -4650,10 +4651,10 @@ class BotService : Service() {
             // tout de suite (« Accélér. », même place que « Aide ») pour revenir à « Soigner » sans attendre.
             val sinceAide = now - healAideAt
             if (!healMeasured) {
-                if (sinceAide < 3_000L) return
-                if (healSampAt != 0L && now - healSampAt < 1_500L) return
+                if (sinceAide < 700L) return // lecture quasi immédiate : l'aide automatique s'applique tout de suite
+                if (healSampAt != 0L && now - healSampAt < 800L) return
                 val rem = healParseTime(ocrRefWhite(rgb, 600, 1668, 845, 1718))
-                var done = sinceAide >= 10_000L
+                var done = sinceAide >= 6_000L
                 if (rem != null) {
                     if (healSampAt != 0L && healSampT >= 0) {
                         val dt = (now - healSampAt) / 1000.0
@@ -4663,11 +4664,11 @@ class BotService : Service() {
                     if (healT0 <= 0) healT0 = rem + ((now - healSoignerAt) / 1000.0).toInt()
                     val removed = healT0 - (now - healSoignerAt) / 1000.0 - rem
                     if (removed > 0 && healUsed > 0) {
-                        healCalc = maxOf(10, ((healUsed * removed / healT0 * 0.95) / 10).toInt() * 10)
+                        healCalc = maxOf(10, (healUsed * maxOf(0.0, removed - 3.0) / healT0).toInt()) // au plus juste (3 s de marge pour la lecture)
                         log("soigner : fin de l'aide des alliés : durée du lot ${healT0} s, reste $rem s, retiré ${removed.toInt()} s : montant calculé $healCalc")
                     }
                 } else {
-                    if (!done && sinceAide < 8_000L) return
+                    if (!done && sinceAide < 5_000L) return
                     log("soigner : temps restant illisible : accélération sans mesure")
                 }
                 healSampAt = 0L
@@ -4800,8 +4801,10 @@ class BotService : Service() {
             if (healCalc in 10 until used) {
                 // montant calculé d'après ce que l'aide des alliés a retiré : point de départ, puis on remonte par dizaines
                 // tant que l'aide suffit, sans jamais retenter un montant qui a échoué (le nombre d'alliés en ligne varie un peu)
-                healAmt = maxOf(10, minOf(healCalc, healBadMin - 10))
+                healAmt = maxOf(10, minOf(healCalc, healBadMin - 1))
+                healBadMin = minOf(healBadMin, healAmt + 11) // le calcul est précis : on ne cherche plus qu'à quelques soldats près
                 healOkMax = -1
+                healStable = 0
                 healStep = 10
                 log("soigner : $used soldats : trop pour l'aide des alliés ; montant calculé $healCalc, reprise à $healAmt")
             } else {
@@ -4813,9 +4816,18 @@ class BotService : Service() {
             if (used >= healBadMin) { healBadMin = Int.MAX_VALUE; healStep = 100 }
             healOkMax = maxOf(healOkMax, used)
             if (used >= healAmt) {
-                var cand = healAmt + healStep
-                if (cand >= healBadMin && healStep > 10) { healStep = 10; cand = healAmt + healStep }
-                if (cand < healBadMin && cand <= 173_400) healAmt = cand
+                if (healBadMin == Int.MAX_VALUE) {
+                    val cand = healAmt + healStep
+                    if (cand <= 173_400) healAmt = cand
+                } else {
+                    // on connaît une borne haute : on coupe l'écart en deux (par 5) jusqu'à quelques soldats près, puis on reste là
+                    val gap = healBadMin - used
+                    if (gap <= 5) {
+                        if (++healStable >= 6) { healBadMin = Int.MAX_VALUE; healStep = 10; healStable = 0; healAmt = used + 10 } // on retente plus haut de temps en temps
+                    } else {
+                        healAmt = minOf(used + maxOf(5, (gap / 2) / 5 * 5), healBadMin - 1)
+                    }
+                }
             }
             log("soigner : $used soldats : suffisant ; prochain montant $healAmt (pas $healStep, bon jusqu'à ${healOkMax}, trop à partir de ${if (healBadMin == Int.MAX_VALUE) "?" else healBadMin.toString()})")
         }
