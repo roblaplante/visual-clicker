@@ -4432,7 +4432,11 @@ class BotService : Service() {
     private var healIconAt = 0L
     private var healPopupAt = 0L
     private var healIdleSince = 0L
-    private var healTyped = false
+    private var healTypeTries = 0
+    private var healKbWaitUntil = 0L    // le clavier met un moment à s'ouvrir : on ne touche à rien avant
+    private var healSettleUntil = 0L    // après « OK » : le clavier se ferme et la valeur se met à jour
+    private var healMeasured = false
+    private var healSmallSince = 0L     // il ne reste que quelques minutes : la prochaine aide des alliés comblera
     private var healBackLeft = 0
     private var healTypeIdx = 0
     private var healWant = ""
@@ -4489,7 +4493,7 @@ class BotService : Service() {
 
     private fun resetHeal() {
         healFinished = false; healUnknownAt = 0L; healBackTries = 0; healNoIconSince = 0L; healIconTries = 0; healIconAt = 0L
-        healPopupAt = 0L; healIdleSince = 0L; healTyped = false; healBackLeft = 0; healTypeIdx = 0; healWant = ""; healKbClicks = 0
+        healPopupAt = 0L; healIdleSince = 0L; healTypeTries = 0; healKbWaitUntil = 0L; healSettleUntil = 0L; healMeasured = false; healSmallSince = 0L; healBackLeft = 0; healTypeIdx = 0; healWant = ""; healKbClicks = 0
         healSoignerAt = 0L; healSoignerTries = 0; healNAtClick = -1; healAideAt = 0L; healAideTries = 0; healHealSince = 0L
         healBatches = 0; healLastN = -1; healZeroSeen = 0
         healAmt = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(10, 173_400)
@@ -4629,7 +4633,7 @@ class BotService : Service() {
             // Le bouton de droite est « Aide » ; une fois l'aide des alliés arrivée, s'il reste du temps, il devient « Accélér. » (même place).
             healIdleSince = 0L
             if (healHealSince == 0L) {
-                healHealSince = now; healAideTries = 0; healSoignerTries = 0; healTyped = false
+                healHealSince = now; healAideTries = 0; healSoignerTries = 0; healTypeTries = 0; healMeasured = false; healSmallSince = 0L
                 healAccelTries = 0; healWinTries = 0; healChkClicked = false; healSampAt = 0L; healSampT = -1; healCalc = -1
             }
             if (healAideTries < 1) {
@@ -4638,15 +4642,16 @@ class BotService : Service() {
                 clickRef(775.0, 1825.0, "soigner : guérison en cours : « Aide »")
                 return
             }
-            // Dès 5 s après « Aide », on suit le temps restant : quand il ne baisse plus plus vite que le temps qui passe,
-            // les alliés ont fini d'aider. S'il reste du temps, le montant était trop élevé : on mesure ce que l'aide a retiré
-            // (pour calculer le bon montant) puis « Accélér. » (même bouton, même place).
+            // Dès 3 s après « Aide », on suit le temps restant : quand il ne baisse plus plus vite que le temps qui passe,
+            // les alliés ont fini d'aider. S'il reste du temps, le lot n'a pas été soigné du premier coup : le montant
+            // était trop élevé. On mesure ce que l'aide a retiré (pour calculer le bon montant). S'il ne reste que quelques
+            // minutes, la prochaine aide des alliés comblera : on attend sans accélérateur. Sinon « Accélér. » (même place).
             val sinceAide = now - healAideAt
-            if (healAccelTries == 0) {
-                if (sinceAide < 5_000L) return
+            if (!healMeasured) {
+                if (sinceAide < 3_000L) return
                 if (healSampAt != 0L && now - healSampAt < 1_500L) return
                 val rem = healParseTime(ocrRefWhite(rgb, 600, 1668, 845, 1718))
-                var done = sinceAide >= 12_000L
+                var done = sinceAide >= 10_000L
                 if (rem != null) {
                     if (healSampAt != 0L && healSampT >= 0) {
                         val dt = (now - healSampAt) / 1000.0
@@ -4659,19 +4664,23 @@ class BotService : Service() {
                         healCalc = maxOf(10, ((healUsed * removed / healT0 * 0.95) / 10).toInt() * 10)
                         log("soigner : fin de l'aide des alliés : durée du lot ${healT0} s, reste $rem s, retiré ${removed.toInt()} s : montant calculé $healCalc")
                     }
+                    if (rem <= 360) {
+                        healSmallSince = now
+                        log("soigner : il ne reste que $rem s : la prochaine aide comblera, pas d'accélérateur (montant un peu trop haut pour le premier coup)")
+                    }
                 } else {
-                    if (!done && sinceAide < 9_000L) return
+                    if (!done && sinceAide < 8_000L) return
                     log("soigner : temps restant illisible : accélération sans mesure")
                 }
                 healSampAt = 0L
-            } else if (now - healAccelAt < 3_500L) return
-            if (now - healAccelAt >= 3_500L) {
-                if (++healAccelTries > 3) { healStop("la guérison n'avance plus (plus d'accélérateurs ?), arrêt"); return }
-                healAccelAt = now
-                clickRef(775.0, 1825.0, "soigner : il reste du temps après l'aide des alliés : bouton de droite « Accélér. » (essai $healAccelTries)")
-                return
+                healMeasured = true
+                healBatchBad = true
             }
-            if (now - healHealSince > 240_000L) healStop("la guérison dure trop longtemps, arrêt")
+            if (healSmallSince != 0L && now - healSmallSince < 60_000L) return
+            if (now - healAccelAt < 3_500L) return
+            if (++healAccelTries > 3) { healStop("la guérison n'avance plus (plus d'accélérateurs ?), arrêt"); return }
+            healAccelAt = now
+            clickRef(775.0, 1825.0, "soigner : il reste du temps après l'aide des alliés : bouton de droite « Accélér. » (essai $healAccelTries)")
             return
         }
         if (leftTeal < 0.3) return // bouton de gauche masqué (animation) : on attend
@@ -4699,6 +4708,7 @@ class BotService : Service() {
         }
         healZeroSeen = 0
         val want = if (n != null) minOf(healAmt, n) else healAmt
+        if (now < healSettleUntil || now < healKbWaitUntil) return // clavier en train de s'ouvrir ou de se fermer : on laisse l'écran se stabiliser
         val ocrField = healField(rgb)
         // Le jeu garde la quantité d'un lot à l'autre : on se fie à ce que nous y avons tapé ; la lecture peut perdre un chiffre (« 560 » lu « 60 »).
         val known = healFieldBelief > 0
@@ -4707,8 +4717,9 @@ class BotService : Service() {
             known && healFieldSane(ocrField, healFieldBelief) -> healFieldBelief
             else -> ocrField
         }
-        if (!healTyped && field != null && field != want) {
-            healTyped = true
+        if (healTypeTries < 3 && field != null && field != want) {
+            healTypeTries++
+            healKbWaitUntil = now + 2_500L
             healWant = want.toString()
             val cur = field.toString()
             if (known && field == healFieldBelief) {
@@ -4726,7 +4737,6 @@ class BotService : Service() {
             clickRef(812.0, 1030.0, "soigner : quantité $field -> $want : champ touché")
             return
         }
-        healTyped = true
         if (field != null && field == want) healFieldBelief = want
         if (now - healSoignerAt < 3_000L) return
         if (++healSoignerTries > 3) { healStop("« Soigner » sans effet (ressources insuffisantes ?), arrêt"); return }
@@ -4817,7 +4827,9 @@ class BotService : Service() {
 
     /** Efface l'ancienne valeur (retour arrière), tape la quantité voulue au pavé numérique, puis OK. Une touche par passage. */
     private fun healKeyboard() {
+        healKbWaitUntil = 0L // le clavier est ouvert
         if (++healKbClicks > 25 || healWant.isEmpty()) {
+            healSettleUntil = SystemClock.uptimeMillis() + 1_200L
             clickRef(975.0, 1460.0, "soigner : clavier : OK")
             return
         }
@@ -4832,6 +4844,7 @@ class BotService : Service() {
             clickRef(p.first, p.second, "soigner : clavier : $c")
             return
         }
+        healSettleUntil = SystemClock.uptimeMillis() + 1_200L
         clickRef(975.0, 1460.0, "soigner : clavier : OK (quantité $healWant)")
     }
 
