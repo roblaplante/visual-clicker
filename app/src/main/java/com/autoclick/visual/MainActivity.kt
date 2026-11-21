@@ -497,18 +497,22 @@ class MainActivity : AppCompatActivity() {
         root.addView(
             label(
                 "Principe : en ville, l'appli touche la croix verte des blessés (en bas à droite), règle la quantité " +
-                    "(touche le champ à droite de la jauge, efface et tape le nombre au clavier numérique, OK), touche " +
+                    "(touche le champ de la ligne du haut, efface et tape le nombre au clavier numérique, OK), touche " +
                     "« Soigner » puis « Aide » pour demander l'aide de l'alliance, attend la fin de la guérison et recommence, " +
-                    "jusqu'à ce qu'il n'y ait plus de blessés (compteur à zéro ou croix verte disparue)."
+                    "jusqu'à ce qu'il n'y ait plus de blessés (fenêtre fermée ou croix verte disparue)."
             )
         )
         root.addView(
             label(
-                "Elle ne touche jamais « Terminer » (gemmes) ni « Annuler soins ». Si « Soigner » reste sans effet " +
-                    "(ressources insuffisantes), ou si la guérison dure plus de 2 min 30 sans l'aide de l'alliance, elle s'arrête."
+                "Le bon montant dépend du nombre d'alliés en ligne : l'appli le cherche toute seule. Elle part du montant " +
+                    "ci-dessous ; tant que l'aide des alliés suffit à finir la guérison, elle monte par centaines. Si " +
+                    "l'aide ne suffit pas (le bouton devient « Accélér. »), elle utilise les accélérateurs (« Utilisation " +
+                    "rapide », case « Ne plus afficher pour aujourd'hui » cochée, « Utiliser »), redescend au dernier bon " +
+                    "montant puis affine par dizaines. Si les alliés en ligne changent, elle repart par centaines. " +
+                    "Elle ne touche jamais « Terminer » (gemmes) ni « Annuler soins »."
             )
         )
-        root.addView(label("Nombre de soldats soignés à chaque lot (500 par défaut ; moins s'il en reste moins) :"))
+        root.addView(label("Montant de départ (soldats soignés par lot, ligne du haut) :"))
         healQtyEdit = numberField("healQty", 500)
         root.addView(healQtyEdit)
         root.addView(label("Ouvrez le jeu sur la ville (la croix verte des blessés doit être visible), puis démarrez."))

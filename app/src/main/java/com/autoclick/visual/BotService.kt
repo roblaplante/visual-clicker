@@ -4446,6 +4446,19 @@ class BotService : Service() {
     private var healBatches = 0
     private var healLastN = -1
     private var healZeroSeen = 0
+    // Recherche du bon montant : « montant de départ », puis par centaines, puis par dizaines (voir healLearn).
+    private var healAmt = 500
+    private var healStep = 100
+    private var healOkMax = -1
+    private var healBadMin = Int.MAX_VALUE
+    private var healUsed = 0
+    private var healBatchBad = false
+    private var healAccelTries = 0
+    private var healAccelAt = 0L
+    private var healWinAt = 0L
+    private var healWinTries = 0
+    private var healChkClicked = false
+    private val healGreenCk = Scalar(55.0, 100.0, 100.0)
 
     private val healGreenLo = Scalar(55.0, 120.0, 100.0)
     private val healGreenHi = Scalar(80.0, 255.0, 255.0)
@@ -4473,12 +4486,15 @@ class BotService : Service() {
         healPopupAt = 0L; healIdleSince = 0L; healTyped = false; healBackLeft = 0; healTypeIdx = 0; healWant = ""; healKbClicks = 0
         healSoignerAt = 0L; healSoignerTries = 0; healNAtClick = -1; healAideAt = 0L; healAideTries = 0; healHealSince = 0L
         healBatches = 0; healLastN = -1; healZeroSeen = 0
+        healAmt = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(10, 173_400)
+        healStep = 100; healOkMax = -1; healBadMin = Int.MAX_VALUE; healUsed = 0; healBatchBad = false
+        healAccelTries = 0; healAccelAt = 0L; healWinAt = 0L; healWinTries = 0; healChkClicked = false
     }
 
     private fun loadHeal() {
         loadAsset("heal/icone.png")?.let { farm["heal_icone"] = it }
         resetHeal()
-        log("soigner : démarrage (à la demande)")
+        log("soigner : démarrage (à la demande), montant de départ $healAmt")
     }
 
     private fun healStop(msg: String) {
@@ -4536,6 +4552,18 @@ class BotService : Service() {
             return
         }
 
+        // 1 bis) fenêtres des accélérateurs (« Vitesse de soins des soldats ») : sélection, puis confirmation
+        val winOrange = colorRect(rgb, 115, 1490, 525, 1610, healOrangeLo, healOrangeHi)
+        val w7 = colorRect(rgb, 333, 1650, 748, 1765, healTealLo, healTealHi) >= 0.5 && winOrange >= 0.5
+        val w8 = !w7 && winOrange < 0.2 && colorRect(rgb, 330, 1680, 750, 1795, healTealLo, healTealHi) >= 0.6
+        if (w7 || w8) {
+            val t = ocrRefWhite(rgb, 60, 600, 1020, 740)
+            if ("vites" in t || "soins" in t) {
+                healAccelWindow(rgb, now, w7)
+                return
+            }
+        }
+
         // 2) fenêtre « Soigner les Blessés » : Terminer (orange) au milieu et Soigner / Aide (turquoise) à droite
         if (colorRect(rgb, 325, 1775, 600, 1880, healOrangeLo, healOrangeHi) >= 0.5 &&
             colorRect(rgb, 640, 1775, 915, 1880, healTealLo, healTealHi) >= 0.4
@@ -4590,23 +4618,37 @@ class BotService : Service() {
         val leftTeal = colorRect(rgb, 120, 1775, 285, 1880, healTealLo, healTealHi)
         val leftOrange = colorRect(rgb, 120, 1775, 285, 1880, healOrangeLo, healOrangeHi)
         if (leftOrange >= 0.3) {
-            // guérison en cours : « Annuler soins » (orange) à gauche, « Terminer » (gemmes) au milieu : jamais touchés ; « Aide » à droite
+            // guérison en cours : « Annuler soins » (orange) à gauche, « Terminer » (gemmes) au milieu : jamais touchés.
+            // Le bouton de droite est « Aide » ; une fois l'aide des alliés arrivée, s'il reste du temps, il devient « Accélér. » (même place).
             healIdleSince = 0L
-            if (healHealSince == 0L) { healHealSince = now; healAideTries = 0; healSoignerTries = 0; healTyped = false }
-            if (healAideTries < 2 && now - healAideAt >= 2_500L) {
+            if (healHealSince == 0L) {
+                healHealSince = now; healAideTries = 0; healSoignerTries = 0; healTyped = false
+                healAccelTries = 0; healWinTries = 0; healChkClicked = false
+            }
+            if (healAideTries < 1) {
                 healAideTries++
                 healAideAt = now
-                clickRef(775.0, 1825.0, "soigner : guérison en cours : « Aide » (essai $healAideTries)")
+                clickRef(775.0, 1825.0, "soigner : guérison en cours : « Aide »")
                 return
             }
-            if (now - healHealSince > 150_000L) healStop("la guérison dure trop longtemps (l'alliance n'aide pas ?), arrêt")
+            // on laisse 15 s aux alliés pour aider ; si la guérison n'est pas finie, le montant était trop élevé : « Accélér. »
+            if (now - healAideAt >= 15_000L && now - healAccelAt >= 4_000L) {
+                if (++healAccelTries > 3) { healStop("la guérison n'avance plus (plus d'accélérateurs ?), arrêt"); return }
+                healAccelAt = now
+                clickRef(775.0, 1825.0, "soigner : il reste du temps après l'aide des alliés : bouton de droite « Accélér. » (essai $healAccelTries)")
+                return
+            }
+            if (now - healHealSince > 240_000L) healStop("la guérison dure trop longtemps, arrêt")
             return
         }
         if (leftTeal < 0.3) return // bouton de gauche masqué (animation) : on attend
         if (healHealSince != 0L) {
             healHealSince = 0L
             healBatches++
-            log("soigner : lot $healBatches terminé")
+            val bad = healBatchBad
+            healBatchBad = false
+            log("soigner : lot $healBatches terminé ($healUsed soldats${if (bad) ", accélérateurs utilisés" else ", aide des alliés suffisante"})")
+            healLearn(healUsed, bad)
         }
         if (healIdleSince == 0L) healIdleSince = now
         val n = healRemaining(rgb)
@@ -4623,8 +4665,7 @@ class BotService : Service() {
             return
         }
         healZeroSeen = 0
-        val cfgQty = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(1, 999_999)
-        val want = if (n != null) minOf(cfgQty, n) else cfgQty
+        val want = if (n != null) minOf(healAmt, n) else healAmt
         val field = healField(rgb)
         if (!healTyped && field != null && field != want) {
             healTyped = true
@@ -4640,7 +4681,57 @@ class BotService : Service() {
         if (++healSoignerTries > 3) { healStop("« Soigner » sans effet (ressources insuffisantes ?), arrêt"); return }
         healSoignerAt = now
         healNAtClick = n ?: -1
-        clickRef(775.0, 1850.0, "soigner : lot ${healBatches + 1} : « Soigner » (quantité ${field ?: "?"}, restants ${n ?: "?"})")
+        healUsed = field ?: want
+        val f2 = ocrRefWhite(rgb, 735, 1215, 895, 1270).filter { it.isDigit() }
+        val dur = ocrRefWhite(rgb, 700, 1815, 915, 1885).replace("\n", " ").trim()
+        clickRef(775.0, 1850.0, "soigner : lot ${healBatches + 1} : « Soigner » (ligne du haut $healUsed, 2e ligne ${if (f2.isEmpty()) "-" else f2}, durée « $dur », restants ${n ?: "?"}, montant visé $healAmt)")
+    }
+
+    /**
+     * Recherche du bon montant, celui que l'aide des alliés suffit à soigner (il dépend des joueurs en ligne).
+     * Départ : le montant du menu. Un lot sans accélérateurs : on monte (par centaines). Un lot qui en a demandé : on
+     * redescend au dernier bon montant, puis on affine par dizaines. Si les conditions changent (moins d'alliés en ligne),
+     * on repart par centaines.
+     */
+    private fun healLearn(used: Int, bad: Boolean) {
+        if (used <= 0) return
+        if (bad) {
+            if (used <= healOkMax) { healOkMax = -1; healStep = 100 }
+            healBadMin = minOf(healBadMin, used)
+            healAmt = if (healOkMax in 1 until used) healOkMax else maxOf(10, used - healStep)
+            log("soigner : $used soldats : trop pour l'aide des alliés ; prochain montant $healAmt (pas $healStep)")
+        } else {
+            if (used >= healBadMin) { healBadMin = Int.MAX_VALUE; healStep = 100 }
+            healOkMax = maxOf(healOkMax, used)
+            if (used >= healAmt) {
+                var cand = healAmt + healStep
+                if (cand >= healBadMin && healStep > 10) { healStep = 10; cand = healAmt + healStep }
+                if (cand < healBadMin && cand <= 173_400) healAmt = cand
+            }
+            log("soigner : $used soldats : suffisant ; prochain montant $healAmt (pas $healStep, bon jusqu'à ${healOkMax}, trop à partir de ${if (healBadMin == Int.MAX_VALUE) "?" else healBadMin.toString()})")
+        }
+    }
+
+    /** Fenêtres « Vitesse de soins des soldats » : sélection (Utilisation rapide), puis confirmation (case « Ne plus afficher », Utiliser). Jamais « Terminer » (gemmes). */
+    private fun healAccelWindow(rgb: Mat, now: Long, selection: Boolean) {
+        healPopupAt = now
+        healUnknownAt = 0L
+        healBatchBad = true
+        if (now - healWinAt < 1_500L) return
+        if (selection) {
+            if (++healWinTries > 4) { healStop("accélérateurs : « Utilisation rapide » sans effet (plus d'accélérateurs ?), arrêt"); return }
+            healWinAt = now
+            clickRef(540.0, 1708.0, "soigner : accélérateurs : « Utilisation rapide » (essai $healWinTries)")
+            return
+        }
+        val chk = colorRect(rgb, 255, 1598, 298, 1642, healGreenCk, healGreenHi)
+        healWinAt = now
+        if (chk < 0.10 && !healChkClicked) {
+            healChkClicked = true
+            clickRef(275.0, 1620.0, "soigner : accélérateurs : case « Ne plus afficher pour aujourd'hui » cochée")
+            return
+        }
+        clickRef(540.0, 1738.0, "soigner : accélérateurs : confirmation « Utiliser »")
     }
 
     /** Efface l'ancienne valeur (retour arrière), tape la quantité voulue au pavé numérique, puis OK. Une touche par passage. */
