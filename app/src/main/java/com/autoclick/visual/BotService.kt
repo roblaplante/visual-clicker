@@ -4643,9 +4643,9 @@ class BotService : Service() {
                 return
             }
             // Dès 3 s après « Aide », on suit le temps restant : quand il ne baisse plus plus vite que le temps qui passe,
-            // les alliés ont fini d'aider. S'il reste du temps, le lot n'a pas été soigné du premier coup : le montant
-            // était trop élevé. On mesure ce que l'aide a retiré (pour calculer le bon montant). S'il ne reste que quelques
-            // minutes, la prochaine aide des alliés comblera : on attend sans accélérateur. Sinon « Accélér. » (même place).
+            // les alliés ont fini d'aider. S'il reste du temps (même quelques minutes), le lot n'a pas été soigné du premier coup :
+            // le montant était trop élevé. On mesure ce que l'aide a retiré (pour calculer le bon montant), puis on accélère
+            // tout de suite (« Accélér. », même place que « Aide ») pour revenir à « Soigner » sans attendre.
             val sinceAide = now - healAideAt
             if (!healMeasured) {
                 if (sinceAide < 3_000L) return
@@ -4664,10 +4664,6 @@ class BotService : Service() {
                         healCalc = maxOf(10, ((healUsed * removed / healT0 * 0.95) / 10).toInt() * 10)
                         log("soigner : fin de l'aide des alliés : durée du lot ${healT0} s, reste $rem s, retiré ${removed.toInt()} s : montant calculé $healCalc")
                     }
-                    if (rem <= 360) {
-                        healSmallSince = now
-                        log("soigner : il ne reste que $rem s : la prochaine aide comblera, pas d'accélérateur (montant un peu trop haut pour le premier coup)")
-                    }
                 } else {
                     if (!done && sinceAide < 8_000L) return
                     log("soigner : temps restant illisible : accélération sans mesure")
@@ -4676,7 +4672,6 @@ class BotService : Service() {
                 healMeasured = true
                 healBatchBad = true
             }
-            if (healSmallSince != 0L && now - healSmallSince < 60_000L) return
             if (now - healAccelAt < 3_500L) return
             if (++healAccelTries > 3) { healStop("la guérison n'avance plus (plus d'accélérateurs ?), arrêt"); return }
             healAccelAt = now
