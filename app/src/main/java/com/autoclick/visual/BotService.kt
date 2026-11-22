@@ -4999,6 +4999,19 @@ class BotService : Service() {
     }
 
     /** Saturation moyenne d'une zone : carte de héros colorée (élevée) ou emplacement vide « + » gris (faible). */
+    private fun epCardFilled(rgb: Mat, cx: Int): Boolean {
+        val r = epRef(rgb, cx - 90, 600, cx + 90, 960)
+        val hsv = Mat()
+        Imgproc.cvtColor(r, hsv, Imgproc.COLOR_RGB2HSV)
+        r.release()
+        val m = Mat()
+        Core.inRange(hsv, Scalar(0.0, 90.0, 60.0), Scalar(180.0, 255.0, 255.0), m)
+        hsv.release()
+        val f = Core.countNonZero(m) / m.total().toDouble()
+        m.release()
+        return f >= 0.15
+    }
+
     private fun epSat(rgb: Mat, x0: Int, y0: Int, x1: Int, y1: Int): Double {
         val r = epRef(rgb, x0, y0, x1, y1)
         val hsv = Mat()
@@ -5407,7 +5420,9 @@ class BotService : Service() {
         val team = epCurSquad
         if (team < 0) { epStop("fenêtre des héros sans équipe en cours"); return }
         val sx = intArrayOf(245, 540, 833)
-        val k = (0 until 3).count { epSat(rgb, sx[it] - 60, 700, sx[it] + 60, 850) > 60.0 }
+        // Emplacement rempli = carte colorée (fond de rareté) : part de pixels saturés sur toute la carte. L'ancienne mesure (saturation moyenne
+        // du portrait) tombait à 59 pour un héros aux cheveux blancs (seuil 60) : le héros était cherché une 2e fois alors qu'il était assigné.
+        val k = (0 until 3).count { epCardFilled(rgb, sx[it]) }
         if (k >= 3) {
             clickRef(965.0, 475.0, "épreuves : équipe ${team + 1} : 3 héros assignés, fermeture de la fenêtre")
             epWaitUntil = now + 1_300L
