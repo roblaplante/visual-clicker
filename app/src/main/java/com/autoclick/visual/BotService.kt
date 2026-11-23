@@ -872,9 +872,12 @@ class BotService : Service() {
 
     private fun pauseBot(msg: String) {
         running = false
-        overlay?.let {
-            it.text = "▶"
-            (it.background as GradientDrawable).setColor(0xCC2E7D32.toInt())
+        // le bot tourne sur son propre fil : les vues se modifient sur le fil principal (sinon CalledFromWrongThreadException et le bouton restait en pause)
+        main.post {
+            overlay?.let {
+                it.text = "▶"
+                (it.background as GradientDrawable).setColor(0xCC2E7D32.toInt())
+            }
         }
         toast(msg)
     }
@@ -3504,7 +3507,7 @@ class BotService : Service() {
     private val bqBtnClicks = HashMap<Int, Int>()
 
     private fun resetBq(now: Long) {
-        bqHebdoStep = 0; bqBarSwipes = 0
+        bqHebdoStep = 0; bqBarSwipes = 0; bqSwipeDot = -1
         bqStartAt = now
         bqWaitUntil = now + 1800L
         bqPageKey = -1
@@ -3593,7 +3596,7 @@ class BotService : Service() {
             if (start >= 0) {
                 val wRef = (last - start + 1) / sc
                 val cx = ((start + last) / 2.0 / sc).toInt()
-                if (wRef in 10.0..34.0 && cx in 110..990) out.add(cx)
+                if (wRef in 10.0..34.0 && cx in 110..1045) out.add(cx)
             }
             start = -1
         }
@@ -3755,6 +3758,28 @@ class BotService : Service() {
         ClickAccessibilityService.instance?.swipe((x0 * sc).toFloat(), (300 * sc).toFloat(), (x1.coerceIn(20, 1060) * sc).toFloat(), (300 * sc).toFloat(), 300)
     }
 
+    private var bqSwipeDot = -1
+
+    /** Appui à un point couvert par nos boutons flottants : ils deviennent insensibles au toucher (FLAG_NOT_TOUCHABLE) le temps de l'appui. */
+    private fun tapThroughOverlays(x: Double, y: Double) {
+        lastClick = SystemClock.uptimeMillis()
+        fun setTouchable(touchable: Boolean) {
+            for (v in listOfNotNull<View>(overlay, menuBtn)) {
+                try {
+                    val lp = v.layoutParams as? WindowManager.LayoutParams ?: continue
+                    lp.flags = if (touchable) lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                        else lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    wm.updateViewLayout(v, lp)
+                } catch (_: Exception) {}
+            }
+        }
+        main.post { setTouchable(false) }
+        handler.postDelayed({
+            ClickAccessibilityService.instance?.click((x * w / 1080.0).toFloat(), (y * w / 1080.0).toFloat())
+            main.postDelayed({ setTouchable(true) }, 500L)
+        }, 300L)
+    }
+
     private fun bqExit(msg: String, now: Long) {
         lastClick = now
         backArrow()
@@ -3891,13 +3916,26 @@ class BotService : Service() {
             val sg = bqTabSig(rgb, maxOf(30, x - 90))
             sg == null || bqIgnore.none { bqSameSig(it, sg) }
         }
-        if (cand != null && maxOf(30, cand - 90) < 290 && bqBarSwipes < 6) {
-            // l'onglet est sous nos boutons ☰ ▶ (en haut à gauche) : on fait coulisser la barre d'onglets vers la droite
-            bqBarSwipes++
-            bqSwipeBar(rgb, true, 330)
-            log("daily : Boutiques : onglet à point rouge sous nos boutons, la barre d'onglets coulisse ($bqBarSwipes)")
-            bqWaitUntil = now + 1500L
-            return
+        if (cand != null && maxOf(30, cand - 90) < 290) {
+            // l'onglet est sous nos boutons ☰ ▶ (en haut à gauche) : on fait coulisser la barre d'onglets vers la droite, tant que ça la déplace
+            if (bqBarSwipes < 6 && !(bqBarSwipes > 0 && kotlin.math.abs(cand - bqSwipeDot) <= 6)) {
+                bqBarSwipes++
+                bqSwipeDot = cand
+                bqSwipeBar(rgb, true, 330)
+                log("daily : Boutiques : onglet à point rouge sous nos boutons, la barre d'onglets coulisse ($bqBarSwipes)")
+                bqWaitUntil = now + 1500L
+                return
+            }
+            // la barre est au bout : l'onglet reste sous nos boutons. On les rend transparents au toucher le temps d'un appui (jamais un clic sur ☰).
+            if (bqVisits < 14) {
+                bqVisits++
+                bqCurSig = bqTabSig(rgb, 30)
+                val tx = maxOf(60, cand - 40).toDouble()
+                log("daily : Boutiques : onglet à point rouge sous nos boutons, barre au bout : appui à travers nos boutons ($bqVisits)")
+                tapThroughOverlays(tx, 300.0)
+                bqWaitUntil = now + 2200L
+                return
+            }
         }
         if (cand != null && bqVisits < 14) {
             bqVisits++
