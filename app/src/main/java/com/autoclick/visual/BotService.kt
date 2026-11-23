@@ -3003,13 +3003,25 @@ class BotService : Service() {
             return
         }
         val title = ocrRef(rgb, 140, 100, 700, 190)
-        if ("creuset" in title || "ritable" in title) {
+        // Nouvelle interface : plus de titre en haut ; « Restant du jour : N » au-dessus du bouton « Raffiner » (343..730 x 1365..1475),
+        // et en bas deux boutons « Super Raffinement » (jamais touchés).
+        val rest = ocrRefWhite(rgb, 330, 1285, 665, 1355).ifBlank { ocrRef(rgb, 330, 1285, 665, 1355) }.lowercase()
+        val cyanLo = Scalar(86.0, 90.0, 120.0)
+        val cyanHi = Scalar(105.0, 255.0, 255.0)
+        val newBtn = colorRect(rgb, 343, 1365, 730, 1475, cyanLo, cyanHi)
+        val newUi = "restant" in rest || ("jour" in rest && newBtn >= 0.3) ||
+            (newBtn >= 0.6 && colorRect(rgb, 80, 1940, 505, 2055, cyanLo, cyanHi) >= 0.5 && colorRect(rgb, 575, 1940, 1000, 2055, cyanLo, cyanHi) >= 0.5)
+        if (newUi || "creuset" in title || "ritable" in title) {
             dailyIdleAt = now
-            val cyan = colorRect(rgb, 327, 1940, 752, 2055, Scalar(86.0, 90.0, 120.0), Scalar(105.0, 255.0, 255.0))
+            val left = if (newUi) Regex("\\d+").find(rest.substringAfterLast(':', ""))?.value?.toIntOrNull() else null
+            val cyan = if (newUi) (if (left == 0) 0.0 else newBtn)
+                else colorRect(rgb, 327, 1940, 752, 2055, cyanLo, cyanHi)
+            if (newUi && left != null && left > 0 && cyan < 0.3 && dailyBtn < 6) return // animation sur le bouton : on attend
             if (cyan >= 0.3 && dailyBtn < 6) {
                 dailyBtn++
                 dailyStep = 1
-                clickRef(540.0, 1995.0, "daily : Creuset : Raffiner ($dailyBtn/6)")
+                if (newUi) clickRef(537.0, 1420.0, "daily : Creuset : Raffiner ($dailyBtn/6, restant du jour ${left ?: "?"})")
+                else clickRef(540.0, 1995.0, "daily : Creuset : Raffiner ($dailyBtn/6)")
             } else if (dailyBtn >= 6 || ++dailyGrey >= 2) {
                 lastClick = now
                 backArrow()
