@@ -1687,12 +1687,13 @@ class BotService : Service() {
     private var dailyActAt = 0L
     private var dailyIdleAt = 0L // dernier instant où un écran connu a été reconnu : au-delà de 10 s sans rien, on abandonne
     private var dailyFinished = false
+    private var dailyEndPhase = false // toutes les tâches de la liste sont faites : dernière étape = Missions quotidiennes (rond rouge)
     private val dailyAttempts = HashMap<String, Int>()
     private var lastListDump = ""
     private val dailyLaunchAt = HashMap<String, Long>()
 
     private fun resetDaily() {
-        dailyState = "OPEN"; dailyStep = 0; dailyStepAt = 0L; dailyTries = 0; dailyFinished = false
+        dailyState = "OPEN"; dailyStep = 0; dailyStepAt = 0L; dailyTries = 0; dailyFinished = false; dailyEndPhase = false
         dailyAttempts.clear(); lastListDump = ""
     }
 
@@ -1864,8 +1865,8 @@ class BotService : Service() {
                     clickRef(803.0, 2240.0, "daily : Coffres d'alliance : chiffre rouge sur Alliance, ouverture")
                     return
                 }
-                // Missions quotidiennes : icône du parchemin en bas à gauche avec un chiffre dans un rond rouge
-                if (cityVisible && (dailyAttempts["missions"] ?: 0) < 2 && redBadgeOnMissions(rgb)) {
+                // Missions quotidiennes (en toute dernière étape, une fois la liste épuisée) : icône du parchemin en bas à gauche avec un chiffre dans un rond rouge
+                if (cityVisible && dailyEndPhase && (dailyAttempts["missions"] ?: 0) < 2 && redBadgeOnMissions(rgb)) {
                     dailyAttempts["missions"] = (dailyAttempts["missions"] ?: 0) + 1
                     dailyState = "MISSIONS"
                     dailyStep = 0
@@ -2019,6 +2020,13 @@ class BotService : Service() {
                 if (!launched) {
                     if (contribCy < 0) lines.filter { "contr" in it.text.lowercase() || "all" in it.text.lowercase() }
                         .takeIf { it.isNotEmpty() }?.let { ls -> log("daily : lecture OCR près de Contrib : " + ls.joinToString(" | ") { it.text.trim() }) }
+                    if (!dailyEndPhase) {
+                        dailyEndPhase = true
+                        dailyState = "OPEN"
+                        dailyTries = 0
+                        log("daily : plus de tâche dans la liste : dernière étape, Missions quotidiennes (rond rouge)")
+                        return
+                    }
                     dailyFinish("Daily terminé : plus de tâche à faire")
                 }
             }
@@ -2993,7 +3001,7 @@ class BotService : Service() {
 
 
     /**
-     * Creuset en or véritable : écran du creuset > « Raffiner » touché 6 fois (aucun écran entre deux touches), ou moins si le
+     * Creuset en or véritable : écran du creuset > « Raffiner » touché 7 fois (aucun écran entre deux touches), ou moins si le
      * bouton devient gris (« Restant du jour : 0 ») > flèche bleue en haut à gauche.
      */
     private fun detectCreuset(rgb: Mat, now: Long) {
@@ -3019,13 +3027,13 @@ class BotService : Service() {
             val left = if (newUi) Regex("\\d+").find(rest.substringAfterLast(':', ""))?.value?.toIntOrNull() else null
             val cyan = if (newUi) (if (left == 0) 0.0 else newBtn)
                 else colorRect(rgb, 327, 1940, 752, 2055, cyanLo, cyanHi)
-            if (newUi && left != null && left > 0 && cyan < 0.3 && dailyBtn < 6) return // animation sur le bouton : on attend
-            if (cyan >= 0.3 && dailyBtn < 6) {
+            if (newUi && left != null && left > 0 && cyan < 0.3 && dailyBtn < 7) return // animation sur le bouton : on attend
+            if (cyan >= 0.3 && dailyBtn < 7) {
                 dailyBtn++
                 dailyStep = 1
-                if (newUi) clickRef(537.0, 1420.0, "daily : Creuset : Raffiner ($dailyBtn/6, restant du jour ${left ?: "?"})")
-                else clickRef(540.0, 1995.0, "daily : Creuset : Raffiner ($dailyBtn/6)")
-            } else if (dailyBtn >= 6 || ++dailyGrey >= 2) {
+                if (newUi) clickRef(537.0, 1420.0, "daily : Creuset : Raffiner ($dailyBtn/7, restant du jour ${left ?: "?"})")
+                else clickRef(540.0, 1995.0, "daily : Creuset : Raffiner ($dailyBtn/7)")
+            } else if (dailyBtn >= 7 || ++dailyGrey >= 2) {
                 lastClick = now
                 backArrow()
                 log("daily : Creuset : fin (touches $dailyBtn, bouton ${if (cyan >= 0.3) "cyan" else "gris"}), flèche retour")
