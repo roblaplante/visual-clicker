@@ -3515,7 +3515,7 @@ class BotService : Service() {
     private val bqBtnClicks = HashMap<Int, Int>()
 
     private fun resetBq(now: Long) {
-        bqHebdoStep = 0; bqBarSwipes = 0; bqSwipeDot = -1
+        bqHebdoStep = 0; bqBarSwipes = 0; bqSwipeDot = -1; bqEndSwipes = 0
         bqStartAt = now
         bqWaitUntil = now + 1800L
         bqPageKey = -1
@@ -3604,7 +3604,8 @@ class BotService : Service() {
             if (start >= 0) {
                 val wRef = (last - start + 1) / sc
                 val cx = ((start + last) / 2.0 / sc).toInt()
-                if (wRef in 10.0..34.0 && cx in 110..1045) out.add(cx)
+                // la pastille ronde « ! » (grosse bulle rouge) a un haut de 30 px de large comme un point : on l'écarte (sa bulle descend sous la bande)
+                if (wRef in 10.0..34.0 && cx in 110..1045 && redRect(rgb, cx - 24, 274, cx + 24, 296) < 0.4) out.add(cx)
             }
             start = -1
         }
@@ -3767,6 +3768,7 @@ class BotService : Service() {
     }
 
     private var bqSwipeDot = -1
+    private var bqEndSwipes = 0 // balayages finaux de la barre d'onglets pour découvrir les onglets cachés au bord de l'écran
 
     /** Appui à un point couvert par nos boutons flottants : ils deviennent insensibles au toucher (FLAG_NOT_TOUCHABLE) le temps de l'appui. */
     private fun tapThroughOverlays(x: Double, y: Double) {
@@ -3948,6 +3950,7 @@ class BotService : Service() {
         if (cand != null && bqVisits < 14) {
             bqVisits++
             bqCurSig = bqTabSig(rgb, maxOf(30, cand - 90))
+            bqEndSwipes = 0
             clickRef(maxOf(30, cand - 90).toDouble(), 300.0, "daily : Boutiques : onglet à point rouge ($bqVisits)")
             bqWaitUntil = now + 1300L
             return
@@ -3970,6 +3973,14 @@ class BotService : Service() {
             bqLeft++
             bqSwipeBar(rgb, true, 600)
             log("daily : Boutiques : pastille « ! » à gauche, la barre d'onglets coulisse vers la droite ($bqLeft)")
+            bqWaitUntil = now + 1500L
+            return
+        }
+        // Dernière vérification : des onglets restent cachés au bord de l'écran (leur point rouge est hors de vue) : on fait coulisser la barre.
+        if (bqEndSwipes < 2) {
+            bqEndSwipes++
+            bqSwipeBar(rgb, false, 600)
+            log("daily : Boutiques : plus de point rouge visible, la barre d'onglets coulisse pour voir les onglets cachés ($bqEndSwipes)")
             bqWaitUntil = now + 1500L
             return
         }
