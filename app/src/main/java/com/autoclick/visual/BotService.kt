@@ -4332,7 +4332,11 @@ class BotService : Service() {
                 if (dailyBtn++ < 4) clickRef(797.0, 262.0, "daily : Bonus de collecte : onglet Expansion")
                 return
             }
-            val bar = colorRect(rgb, 260, 985, 930, 1025, Scalar(40.0, 100.0, 120.0), Scalar(85.0, 255.0, 255.0)) >= 0.4
+            // La barre verte se remplit en proportion du temps restant (8 h 43 sur 24 h = 36 % de la largeur) : on regarde son début à gauche,
+            // pas la largeur entière (l'ancien seuil de 40 % sur toute la barre la faisait passer pour absente et déclenchait l'achat).
+            val greenLo = Scalar(40.0, 100.0, 120.0)
+            val greenHi = Scalar(85.0, 255.0, 255.0)
+            val bar = colorRect(rgb, 260, 985, 330, 1025, greenLo, greenHi) >= 0.4 || colorRect(rgb, 260, 985, 930, 1025, greenLo, greenHi) >= 0.4
             val use24 = colorRect(rgb, 775, 1370, 1000, 1455, Scalar(80.0, 100.0, 150.0), Scalar(105.0, 255.0, 255.0)) >= 0.3
             if (bar) {
                 if (bonusAsk > 0 || bonusBuys > 0) { bonusDone("achat fait, boost actif (barre verte), flèche retour"); return }
