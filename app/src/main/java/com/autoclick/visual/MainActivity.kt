@@ -514,7 +514,15 @@ class MainActivity : AppCompatActivity() {
                     "Elle ne touche jamais « Terminer » (gemmes) ni « Annuler soins »."
             )
         )
-        root.addView(label("Montant de départ (soldats soignés par lot, ligne du haut) :"))
+        val best = sp.getInt("healBest", 0)
+        root.addView(
+            label(
+                if (best > 0) "Dernière bonne valeur trouvée : $best soldats par lot (enregistrée automatiquement comme montant de départ ; " +
+                    "l'appli ne retente plus haut que rarement)."
+                else "Aucune bonne valeur enregistrée pour l'instant : l'appli la mémorise dès qu'un lot passe sans accélérateurs."
+            )
+        )
+        root.addView(label("Montant de départ (soldats soignés par lot, ligne du haut ; la ligne qui a des blessés est choisie automatiquement) :"))
         healQtyEdit = numberField("healQty", 500)
         root.addView(healQtyEdit)
         root.addView(label("Ouvrez le jeu sur la ville (la croix verte des blessés doit être visible), puis démarrez."))

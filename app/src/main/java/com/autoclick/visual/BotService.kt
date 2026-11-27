@@ -4572,6 +4572,8 @@ class BotService : Service() {
         healSoignerAt = 0L; healSoignerTries = 0; healNAtClick = -1; healAideAt = 0L; healAideTries = 0; healHealSince = 0L
         healBatches = 0; healLastN = -1; healZeroSeen = 0
         healAmt = getSharedPreferences("cfg", MODE_PRIVATE).getInt("healQty", 500).coerceIn(10, 173_400)
+        // départ sur la dernière bonne valeur enregistrée : on affine par petits pas au lieu de remonter par centaines
+        healStep = if (getSharedPreferences("cfg", MODE_PRIVATE).getInt("healBest", 0) == healAmt) 10 else 100
         healStep = 100; healStable = 0; healOkMax = -1; healBadMin = Int.MAX_VALUE; healUsed = 0; healBatchBad = false
         healAccelTries = 0; healAccelAt = 0L; healWinAt = 0L; healWinTries = 0; healChkClicked = false
         healT0 = -1; healSampT = -1; healSampAt = 0L; healCalc = -1; healFieldBelief = -1; healRow = 0
@@ -4860,6 +4862,13 @@ class BotService : Service() {
      * redescend au dernier bon montant, puis on affine par dizaines. Si les conditions changent (moins d'alliés en ligne),
      * on repart par centaines.
      */
+    /** Dernière valeur passée sans accélérateurs : gardée dans l'appli et reprise comme montant de départ au prochain lancement. */
+    private fun healSaveBest(used: Int) {
+        if (used < 10) return
+        val sp = getSharedPreferences("cfg", MODE_PRIVATE)
+        if (sp.getInt("healBest", 0) != used) sp.edit().putInt("healBest", used).putInt("healQty", used).apply()
+    }
+
     private fun healLearn(used: Int, bad: Boolean) {
         if (used <= 0) return
         if (bad) {
@@ -4868,7 +4877,9 @@ class BotService : Service() {
             if (healCalc in 10 until used) {
                 // montant calculé d'après ce que l'aide des alliés a retiré : point de départ, puis on remonte par dizaines
                 // tant que l'aide suffit, sans jamais retenter un montant qui a échoué (le nombre d'alliés en ligne varie un peu)
-                healAmt = maxOf(10, minOf(healCalc, healBadMin - 1))
+                // un montant déjà passé sans accélérateurs reste un bon plancher : le calcul (lecture juste après « Aide ») est plutôt un minimum
+                val good = if (healOkMax in 1 until used) healOkMax else -1
+                healAmt = maxOf(10, maxOf(good, minOf(healCalc, healBadMin - 1)))
                 healOkMax = -1
                 healStable = 0
                 healStep = 10
@@ -4889,12 +4900,13 @@ class BotService : Service() {
                     // on connaît une borne haute : on coupe l'écart en deux (par 5) jusqu'à quelques soldats près, puis on reste là
                     val gap = healBadMin - used
                     if (gap <= 5) {
-                        if (++healStable >= 6) { healBadMin = Int.MAX_VALUE; healStep = 10; healStable = 0; healAmt = used + 10 } // on retente plus haut de temps en temps
+                        if (++healStable >= 40) { healBadMin = Int.MAX_VALUE; healStep = 5; healStable = 0; healAmt = used + 5 } // on ne retente plus haut que rarement (une quarantaine de lots)
                     } else {
                         healAmt = minOf(used + maxOf(5, (gap / 2) / 5 * 5), healBadMin - 1)
                     }
                 }
             }
+            healSaveBest(used)
             log("soigner : $used soldats : suffisant ; prochain montant $healAmt (pas $healStep, bon jusqu'à ${healOkMax}, trop à partir de ${if (healBadMin == Int.MAX_VALUE) "?" else healBadMin.toString()})")
         }
     }
